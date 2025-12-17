@@ -1,99 +1,111 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+## Leaving Box API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API NestJS pour piloter des parties "Leaving Box" : gestion des sessions de jeu en temps réel via WebSockets (Socket.IO), sélection aléatoire de modules, timer partagé et exposition d’un manuel PDF.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+### Pile technique
+- NestJS + TypeScript
+- Socket.IO Gateway pour le temps réel
+- Redis pour stocker l’état des sessions (timers, joueurs, état)
+- MongoDB (Mongoose) pour les fiches modules
+- Swagger disponible sur `/api`
+- Fichiers statiques (PDF) servis sur `/manuals`
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
+## Démarrage rapide
 ```bash
-$ npm install
+npm install
+
+# dev
+npm run start:dev
+
+# prod (NODE_ENV=production)
+npm run start:prod
 ```
+Swagger est accessible sur `http://localhost:3000/api`.
 
-## Compile and run the project
+### Variables d’environnement
+- `PORT` (optionnel, défaut 3000)
+- `DATABASE_URL` : URI MongoDB (obligatoire)
+- `REDIS_HOST` / `REDIS_PORT` : accès Redis (défaut localhost:6379)
+- `NODE_ENV` : `development` ou `production`  
+Le module Config lit `./environment/.env.dev` en dev et `./environment/.env.prod` en prod.
 
-```bash
-# development
-$ npm run start
+### Données persistées
+- **Sessions** : stockées dans Redis sous `session:{code}`  
+  `{ id, code, maxTime, remainingTime, timerStarted, createdAt, players[], started }`
+- **Modules** : collection MongoDB avec `{ name, description, rules?, imgUrl? }`
 
-# watch mode
-$ npm run start:dev
+### Ressources statiques
+`/manuals/module-simon.pdf` (et autres PDF placés dans `public/manuals`).
 
-# production mode
-$ npm run start:prod
-```
+---
 
-## Run tests
+## API REST
 
-```bash
-# unit tests
-$ npm run test
+### Sessions
+- `GET /sessions` : liste les clés Redis des sessions actives.
+- `GET /sessions/:sessionCode` : retourne `{ success, session }` ou message d’erreur.
 
-# e2e tests
-$ npm run test:e2e
+### Modules
+- `POST /module` : créer un module  
+  payload : `{ name, description, rules?: string[], imgUrl?: string }`
+- `GET /module` : lister tous les modules.
+- `GET /module/:id` : récupérer un module.
+- `PUT /module/:id` : mettre à jour un module.
+- `DELETE /module/:id/delete` : supprimer un module.
 
-# test coverage
-$ npm run test:cov
-```
+---
 
-## Deployment
+## WebSockets (Socket.IO)
+Gateway : `SessionsGateway` (CORS `origin: *`). Les clients rejoignent une room par code de session.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### Événements client -> serveur
+- `createSession` `{ difficulty: 'Easy' | 'Medium' | 'Hard' }`  
+  Crée une session, associe l’agent (socket.id) et rejoint la room. Durées : Easy 900s, Medium 600s, Hard 60s.
+- `getSession` `{ sessionCode }`  
+  Si le client est déjà dans la room, renvoie l’état courant et la liste des sockets connectés.
+- `joinSession` `{ sessionCode, player }`  
+  Ajoute le joueur (`socket.id-player`) dans Redis et rejoint la room.
+- `leaveSession` `{ sessionCode, player }`  
+  Retire le joueur et quitte la room.
+- `startGame` `{ sessionCode }`  
+  Marque la session comme démarrée et pousse 5 modules aléatoires via `moduleService.findSome(5)`.
+- `clearSession` `{ sessionCode }`  
+  Supprime la session Redis, stoppe le timer et éjecte les sockets de la room.
+- `startTimer` `{ sessionCode }`  
+  Démarre le timer partagé (à partir de `maxTime`) si non déjà lancé.
+- `stopTimer` `{ sessionCode }`  
+  Stoppe le timer et remet `remainingTime` à 0.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Événements serveur -> client
+- `sessionCreated` `{ session }`
+- `currentSession` `{ sessionCode, sessionData, connectedClients }`
+- `playerJoined` `{ player, session }`
+- `playerLeft` `{ player, session }`
+- `gameStarted` `{ session, moduleManuals }`
+- `sessionCleared` `{ sessionCode }`
+- `timerUpdate` `{ remaining }` (toutes les secondes)
+- `timerStopped` `{ sessionCode }`
+- `gameOver` `{ message }` (quand le timer atteint 0)
+- `error` `{ message }`
 
-```bash
-$ npm install -g mau
-$ mau deploy
-```
+### Comportement du timer
+- Un intervalle par session (`sessionTimers`) décrémente `remaining` chaque seconde.
+- À 0 : arrêt de l’intervalle, `remainingTime` mis à 0 dans Redis, émission `gameOver`.
+- `stopTimer` ou `clearSession` nettoient l’intervalle et mettent fin au timer.
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## Scripts utiles
+- `npm run start` : lancement simple.
+- `npm run start:dev` : mode watch.
+- `npm run start:prod` : prod.
+- `npm run test` / `npm run test:e2e` / `npm run test:cov` : tests par défaut Nest (non spécialisés projet).
 
-Check out a few resources that may come in handy when working with NestJS:
+---
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Points d’extension
+- Restreindre qui peut déclencher `startGame` / `startTimer` (actuellement tout client).
+- Ajouter une TTL Redis pour nettoyer les sessions inactives.
+- Sécuriser l’origine Socket.IO et documenter les payloads avec Swagger WebSocket (ou schéma partagé).

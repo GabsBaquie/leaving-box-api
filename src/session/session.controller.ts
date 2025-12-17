@@ -1,6 +1,6 @@
 import { Controller, Get, Param } from '@nestjs/common';
-import { SessionService } from './session.service';
 import { ApiTags } from '@nestjs/swagger';
+import { SessionService } from './session.service';
 
 @ApiTags('Sessions')
 @Controller('sessions')
