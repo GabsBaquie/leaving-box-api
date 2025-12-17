@@ -33,10 +33,20 @@ export class SessionsGateway {
   @SubscribeMessage('createSession')
   async handleCreateSession(
     @MessageBody()
-    data: { difficulty: 'Easy' | 'Medium' | 'Hard' },
+    data: {
+      difficulty: 'Easy' | 'Medium' | 'Hard';
+      role?: 'agent' | 'operator';
+    },
     @ConnectedSocket() client: Socket,
   ) {
     try {
+      if (data.role && data.role !== 'agent') {
+        return {
+          success: false,
+          message: 'Only an agent can create a session',
+        };
+      }
+
       const session = await this.sessionService.createSession({
         difficulty: data.difficulty,
         agentId: client.id,
@@ -45,10 +55,10 @@ export class SessionsGateway {
       for (const room of client.rooms) {
         if (room !== client.id) {
           await this.sessionService.deleteSession(room);
-          client.leave(room);
+          await client.leave(room);
         }
       }
-      client.join(session.code);
+      await client.join(session.code);
       client.emit('sessionCreated', session);
     } catch (error) {
       console.error(error);
@@ -95,10 +105,10 @@ export class SessionsGateway {
     const rooms = client.rooms;
     for (const room of rooms) {
       if (room !== client.id) {
-        client.leave(room);
+        await client.leave(room);
       }
     }
-    client.join(data.sessionCode);
+    await client.join(data.sessionCode);
 
     const session = await this.sessionService.addPlayerToSession(
       data.sessionCode,
@@ -138,7 +148,7 @@ export class SessionsGateway {
     }
 
     // Le client quitte la salle correspondant à la session
-    client.leave(data.sessionCode);
+    await client.leave(data.sessionCode);
 
     // Informe tous les clients de la salle que le joueur a quitté
     this.server.to(data.sessionCode).emit('playerLeft', {
@@ -154,7 +164,6 @@ export class SessionsGateway {
     @MessageBody() data: { sessionCode: string },
     @ConnectedSocket() client: Socket,
   ) {
-    //TODO - HANDLE WITH CLIENT (ONLY AGENT CAN START GAME)
     const session = await this.sessionService.getSession(data.sessionCode);
     if (!session) {
       return {
@@ -162,15 +171,22 @@ export class SessionsGateway {
         message: `Session with code ${data.sessionCode} does not exist`,
       };
     }
+    if (session.agentId !== client.id) {
+      return {
+        success: false,
+        message: 'Only the agent can start the game',
+      };
+    }
 
-    this.sessionService.updateSession(data.sessionCode, {
-      started: true,
-    });
+    const updatedSession =
+      (await this.sessionService.updateSession(data.sessionCode, {
+        started: true,
+      })) ?? session;
     const moduleManuals = await this.moduleService.findSome(5);
 
     this.server
       .to(data.sessionCode)
-      .emit('gameStarted', { session, moduleManuals });
+      .emit('gameStarted', { session: updatedSession, moduleManuals });
 
     return { success: true };
   }
@@ -181,12 +197,25 @@ export class SessionsGateway {
     @ConnectedSocket() client: Socket,
   ) {
     try {
-      console.log('sessionCleared', data);
+      const session = await this.sessionService.getSession(data.sessionCode);
+      if (!session) {
+        return {
+          success: false,
+          message: `Session with code ${data.sessionCode} does not exist`,
+        };
+      }
+      if (session.agentId !== client.id) {
+        return {
+          success: false,
+          message: 'Only the agent can clear the session',
+        };
+      }
+
       await this.sessionService.deleteSession(data.sessionCode);
       this.server
         .to(data.sessionCode)
         .emit('sessionCleared', { sessionCode: data.sessionCode });
-      this.stopGameTimer(data.sessionCode);
+      await this.stopGameTimer(data.sessionCode);
       this.server.to(data.sessionCode).socketsLeave(data.sessionCode);
 
       return { success: true };
@@ -197,35 +226,73 @@ export class SessionsGateway {
   }
 
   @SubscribeMessage('startTimer')
-  async handleStartTimer(@MessageBody() data: { sessionCode: string }) {
-    // Démarre le timer pour la session avec la durée spécifiée (en secondes)
-    const session = await this.sessionService.startTimer(data.sessionCode);
+  async handleStartTimer(
+    @MessageBody() data: { sessionCode: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const session = await this.sessionService.getSession(data.sessionCode);
     if (!session) {
       return {
         success: false,
-        message: `Session with code ${data.sessionCode} does not exist or has allready started`,
+        message: `Session with code ${data.sessionCode} does not exist`,
       };
     }
-    this.startGameTimer(data.sessionCode, session);
+    if (session.agentId !== client.id) {
+      return {
+        success: false,
+        message: 'Only the agent can start the timer',
+      };
+    }
+    if (session.timerStarted) {
+      return {
+        success: false,
+        message: 'Timer already started',
+      };
+    }
+
+    const updatedSession = await this.sessionService.startTimer(
+      data.sessionCode,
+    );
+    if (!updatedSession) {
+      return { success: false, message: 'Failed to start timer' };
+    }
+    this.startGameTimer(data.sessionCode, updatedSession);
+    return { success: true };
   }
 
   @SubscribeMessage('stopTimer')
-  handleStopTimer(@MessageBody() data: { sessionCode: string }) {
-    this.stopGameTimer(data.sessionCode);
+  async handleStopTimer(
+    @MessageBody() data: { sessionCode: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const session = await this.sessionService.getSession(data.sessionCode);
+    if (!session) {
+      return {
+        success: false,
+        message: `Session with code ${data.sessionCode} does not exist`,
+      };
+    }
+    if (session.agentId !== client.id) {
+      return {
+        success: false,
+        message: 'Only the agent can stop the timer',
+      };
+    }
+
+    await this.stopGameTimer(data.sessionCode);
+    return { success: true };
   }
 
-  async startGameTimer(sessionCode: string, session: Session) {
+  startGameTimer(sessionCode: string, session: Session) {
     let remaining = session.maxTime;
 
     this.server.to(sessionCode).emit('timerUpdate', { remaining });
 
-    const interval = setInterval(async () => {
-      remaining--;
+    const tick = async () => {
+      remaining -= 1;
       console.log('Remaining time:', remaining, ' for session : ', sessionCode);
 
-      // Met à jour Redis avec le temps restant
       await this.sessionService.updateTimer(sessionCode, remaining);
-
       this.server.to(sessionCode).emit('timerUpdate', { remaining });
 
       if (remaining <= 0) {
@@ -236,6 +303,10 @@ export class SessionsGateway {
           .emit('gameOver', { message: 'Le temps est écoulé !' });
         await this.sessionService.updateTimer(sessionCode, 0);
       }
+    };
+
+    const interval = setInterval(() => {
+      void tick();
     }, 1000);
 
     this.sessionTimers[sessionCode] = interval;

@@ -3,8 +3,8 @@
 Gateway : `SessionsGateway` (Socket.IO) avec CORS ouvert. Les sockets rejoignent la room du code de session.
 
 ### Événements client → serveur
-- `createSession` `{ difficulty: 'Easy' | 'Medium' | 'Hard' }`  
-  Crée une session, associe l’agent (`socket.id`), rejoint la room. Durées : Easy 900s, Medium 600s, Hard 60s.  
+- `createSession` `{ difficulty: 'Easy' | 'Medium' | 'Hard', role?: 'agent' }` **(agent uniquement)**  
+  Refus si `role` est présent et différent de `agent`. Crée une session, associe l’agent (`socket.id`), rejoint la room. Durées : Easy 900s, Medium 600s, Hard 60s.  
   Réponse : `sessionCreated`.
 - `getSession` `{ sessionCode }`  
   Si le client est déjà dans la room, envoie `currentSession` (état + sockets connectées).  
@@ -14,14 +14,14 @@ Gateway : `SessionsGateway` (Socket.IO) avec CORS ouvert. Les sockets rejoignent
   Diffusion : `playerJoined`.
 - `leaveSession` `{ sessionCode, player }`  
   Retire le joueur de Redis, quitte la room, diffuse `playerLeft`.
-- `startGame` `{ sessionCode }`  
-  Marque la session `started: true`, récupère 5 modules aléatoires (`moduleService.findSome(5)`), diffuse `gameStarted`.
-- `clearSession` `{ sessionCode }`  
-  Supprime la session Redis, stoppe le timer, éjecte les sockets de la room, diffuse `sessionCleared`.
-- `startTimer` `{ sessionCode }`  
-  Démarre le timer partagé (si non déjà lancé). Diffusion régulière `timerUpdate`.
-- `stopTimer` `{ sessionCode }`  
-  Arrête le timer, `remainingTime` remis à 0, diffuse `timerStopped`.
+- `startGame` `{ sessionCode }` **(agent uniquement)**  
+  Vérifie `session.agentId === socket.id`, marque la session `started: true`, récupère 5 modules aléatoires (`moduleService.findSome(5)`), diffuse `gameStarted`.
+- `clearSession` `{ sessionCode }` **(agent uniquement)**  
+  Vérifie `agentId`, supprime la session Redis, stoppe le timer, éjecte les sockets de la room, diffuse `sessionCleared`.
+- `startTimer` `{ sessionCode }` **(agent uniquement)**  
+  Vérifie `agentId`, démarre le timer partagé (si non déjà lancé). Diffusion régulière `timerUpdate`.
+- `stopTimer` `{ sessionCode }` **(agent uniquement)**  
+  Vérifie `agentId`, arrête le timer, `remainingTime` remis à 0, diffuse `timerStopped`.
 
 ### Événements serveur → client
 - `sessionCreated` `{ session }`
@@ -39,4 +39,4 @@ Gateway : `SessionsGateway` (Socket.IO) avec CORS ouvert. Les sockets rejoignent
 - Un seul intervalle de timer par session (`sessionTimers`).
 - Les sockets quittent leurs rooms précédentes (hors ID) avant de rejoindre une session.
 - Les données de session vivent dans Redis : clé `session:{code}`.
-- Aucun contrôle d’autorisation côté gateway : tout client peut déclencher `startGame` ou `startTimer` (à restreindre si besoin).
+- Contrôle d’autorisation sur `startGame`, `startTimer`, `stopTimer`, `clearSession` via `session.agentId === socket.id`.

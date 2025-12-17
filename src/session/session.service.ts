@@ -27,6 +27,7 @@ export class SessionService {
     const newSession: Session = {
       id: uuidv4(),
       code: code,
+      agentId: agentId,
       maxTime: maxTime,
       remainingTime: maxTime,
       timerStarted: false,
@@ -44,7 +45,7 @@ export class SessionService {
 
   async getSession(sessionCode: string): Promise<Session | null> {
     const sessionData = await this.redisService.get(`session:${sessionCode}`);
-    return sessionData ? JSON.parse(sessionData) : null;
+    return sessionData ? (JSON.parse(sessionData) as Session) : null;
   }
 
   async updateSession(
@@ -68,7 +69,10 @@ export class SessionService {
   }
 
   // PLAYER MANAGEMENT
-  async addPlayerToSession(sessionCode: string, player: string): Promise<any> {
+  async addPlayerToSession(
+    sessionCode: string,
+    player: string,
+  ): Promise<Session | null> {
     const session = await this.getSession(sessionCode);
     if (!session) {
       return null;
@@ -84,7 +88,7 @@ export class SessionService {
   async removePlayerFromSession(
     sessionCode: string,
     player: string,
-  ): Promise<any> {
+  ): Promise<Session | null> {
     const session = await this.getSession(sessionCode);
     if (!session) {
       return null;
@@ -109,7 +113,10 @@ export class SessionService {
     return session;
   }
 
-  async updateTimer(sessionCode: string, remaining: number): Promise<any> {
+  async updateTimer(
+    sessionCode: string,
+    remaining: number,
+  ): Promise<Session | null> {
     const session = await this.getSession(sessionCode);
     if (!session) {
       return null;

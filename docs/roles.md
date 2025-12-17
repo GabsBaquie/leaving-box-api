@@ -1,27 +1,23 @@
 ## Rôles (Agent / Operator)
 
-Il n’y a pas d’authentification ni de contrôle de rôle côté API : les rôles sont implicites et laissés au client.
+Il n’y a pas d’authentification globale, mais certaines actions sont désormais contrôlées côté gateway selon le rôle.
 
 ### Rôles attendus (convention produit)
 - **Agent** : créateur de la session (`createSession`), identifié par `socket.id`, stocké comme premier élément de `session.players`. C’est l’opérateur principal (démarre/arrête, nettoie).
 - **Operator** : participants qui rejoignent une session via `joinSession` avec un pseudo. Stockés sous forme de chaînes `socket.id-pseudo` dans Redis.
 
-### Droits attendus (cible souhaitée)
-- Agent : devrait être le seul à pouvoir `startGame`, `startTimer`, `stopTimer`, `clearSession`.
-- Operators : rejoindre/quitter (`joinSession` / `leaveSession`), recevoir les mises à jour, jouer/interagir.
-
-### Droits effectivement appliqués dans le code actuel
-- **Aucune restriction** : tout client peut appeler `createSession`, `startGame`, `startTimer`, `stopTimer`, `clearSession`.
-- Join/Leave ouverts à tous avec le code de session.
-- Endpoints REST (CRUD modules, lecture sessions) sans auth ni rôle.
+### Droits (appliqués)
+- Agent uniquement : `createSession`, `startGame`, `startTimer`, `stopTimer`, `clearSession` (contrôle via `session.agentId === socket.id`).
+- Operators : `joinSession`, `leaveSession`, recevoir les mises à jour.
+- Endpoints REST : toujours sans auth ni rôle (CRUD modules, lecture sessions).
 
 ### Données côté serveur
-- Session Redis : `{ id, code, maxTime, remainingTime, timerStarted, createdAt, players[], started }`.
-  - `players[0]` = agent créateur (convention uniquement).
-  - Pas de champ explicite `role`; aucune persistance d’identité autre que `socket.id` + pseudo.
+- Session Redis : `{ id, code, agentId, maxTime, remainingTime, timerStarted, createdAt, players[], started }`.
+  - `agentId` = socket du créateur (référence pour les contrôles).
+  - `players[0]` reste l’agent initial.
+  - Pas de champ explicite `role` par joueur, identité = `socket.id` + pseudo pour les operators.
 
 ### Limitations actuelles
-- Pas de vérification de rôle pour les actions sensibles.
 - Pas d’authentification (REST ou WebSocket).
 - Pas de TTL sur les sessions (risque d’entrées persistantes).
 
