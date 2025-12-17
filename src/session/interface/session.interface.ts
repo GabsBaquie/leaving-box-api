@@ -1,3 +1,11 @@
+export type PlayerRole = 'agent' | 'operator';
+
+export type Player = {
+  id: string;
+  role: PlayerRole;
+  label: string; // ex: operator 1, operator 2, agent
+};
+
 export interface Session {
   id: string;
   code: string;
@@ -6,6 +14,6 @@ export interface Session {
   remainingTime: number;
   timerStarted: boolean;
   createdAt: Date;
-  players: string[];
+  players: Player[];
   started: boolean;
 }

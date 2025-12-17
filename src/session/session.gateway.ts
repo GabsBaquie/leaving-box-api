@@ -9,6 +9,10 @@ import { Server, Socket } from 'socket.io';
 import { SessionService } from './session.service';
 import { ModuleService } from 'src/game/modules/module.service';
 import { Session } from './interface/session.interface';
+import {
+  buildSolutionsByOperator,
+  distributeSolutions,
+} from './utils/solutions-distribution';
 
 @WebSocketGateway({
   cors: {
@@ -60,6 +64,10 @@ export class SessionsGateway {
       }
       await client.join(session.code);
       client.emit('sessionCreated', session);
+      console.log('sessionCreated', {
+        sessionCode: session.code,
+        players: session.players,
+      });
     } catch (error) {
       console.error(error);
       client.emit('error', { message: 'Failed to create session' });
@@ -112,7 +120,8 @@ export class SessionsGateway {
 
     const session = await this.sessionService.addPlayerToSession(
       data.sessionCode,
-      `${client.id}-${data.player}`,
+      client.id,
+      'operator',
     );
     if (!session) {
       return {
@@ -122,8 +131,13 @@ export class SessionsGateway {
     }
 
     this.server.to(data.sessionCode).emit('playerJoined', {
-      player: data.player,
+      playerId: client.id,
+      playerLabel: session.players.find((p) => p.id === client.id)?.label,
       session,
+    });
+    console.log('playerJoined', {
+      sessionCode: data.sessionCode,
+      players: session.players,
     });
 
     return { success: true };
@@ -138,7 +152,7 @@ export class SessionsGateway {
     // Supprime le joueur de la session dans Redis
     const session = await this.sessionService.removePlayerFromSession(
       data.sessionCode,
-      `${client.id}-${data.player}`,
+      client.id,
     );
     if (!session) {
       return {
@@ -152,7 +166,7 @@ export class SessionsGateway {
 
     // Informe tous les clients de la salle que le joueur a quitté
     this.server.to(data.sessionCode).emit('playerLeft', {
-      player: `${client.id}-${data.player}`,
+      playerId: client.id,
       session,
     });
 
@@ -182,11 +196,48 @@ export class SessionsGateway {
       (await this.sessionService.updateSession(data.sessionCode, {
         started: true,
       })) ?? session;
-    const moduleManuals = await this.moduleService.findSome(5);
+    const operators = updatedSession.players.filter(
+      (p) => p.role === 'operator',
+    );
+    if (operators.length === 0) {
+      return {
+        success: false,
+        message: 'At least one operator is required to start the game',
+      };
+    }
 
-    this.server
-      .to(data.sessionCode)
-      .emit('gameStarted', { session: updatedSession, moduleManuals });
+    const moduleManuals = await this.moduleService.findSome(5);
+    const recipients = operators.map((op) => op.id);
+    const solutionsDistribution = distributeSolutions(
+      moduleManuals,
+      recipients,
+    );
+    const solutionsByOperator = buildSolutionsByOperator(solutionsDistribution);
+    const moduleManualsWithoutSolutions = moduleManuals.map((m) => {
+      const plain = { ...(m as unknown as Record<string, unknown>) };
+      delete plain.solutions;
+      return plain;
+    });
+    console.log('gameStarted', {
+      sessionCode: data.sessionCode,
+      players: updatedSession.players,
+      operators: recipients,
+      solutionsDistribution: solutionsDistribution.map((d) => ({
+        moduleId: d.moduleId,
+        allocations: d.allocations,
+      })),
+    });
+    console.log(
+      'solutionsDistributionRaw',
+      JSON.stringify(solutionsDistribution, null, 2),
+    );
+
+    this.server.to(data.sessionCode).emit('gameStarted', {
+      session: updatedSession,
+      moduleManuals: moduleManualsWithoutSolutions,
+      solutionsDistribution,
+      solutionsByOperator,
+    });
 
     return { success: true };
   }
@@ -235,6 +286,13 @@ export class SessionsGateway {
       return {
         success: false,
         message: `Session with code ${data.sessionCode} does not exist`,
+      };
+    }
+    const operators = session.players.filter((p) => p.role === 'operator');
+    if (operators.length === 0) {
+      return {
+        success: false,
+        message: 'At least one operator is required to start the timer',
       };
     }
     if (session.agentId !== client.id) {

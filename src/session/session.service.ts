@@ -1,5 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { Session } from 'src/session/interface/session.interface';
+import {
+  Player,
+  PlayerRole,
+  Session,
+} from 'src/session/interface/session.interface';
+import {
+  createAgentPlayer,
+  createOperatorPlayer,
+} from 'src/session/utils/players';
 import { RedisService } from 'src/session/redis/redis.service';
 import CreateSessionDto from 'src/session/ressource/createSession.ressource';
 import { v4 as uuidv4 } from 'uuid';
@@ -24,6 +32,8 @@ export class SessionService {
       // maxTime = 480;
       maxTime = 60;
     }
+    const agentPlayer: Player = createAgentPlayer(agentId);
+
     const newSession: Session = {
       id: uuidv4(),
       code: code,
@@ -32,7 +42,7 @@ export class SessionService {
       remainingTime: maxTime,
       timerStarted: false,
       createdAt: new Date(),
-      players: [agentId],
+      players: [agentPlayer],
       started: false,
     };
     await this.redisService.set(`session:${code}`, JSON.stringify(newSession));
@@ -71,15 +81,22 @@ export class SessionService {
   // PLAYER MANAGEMENT
   async addPlayerToSession(
     sessionCode: string,
-    player: string,
+    playerId: string,
+    role: PlayerRole,
   ): Promise<Session | null> {
     const session = await this.getSession(sessionCode);
     if (!session) {
       return null;
     }
-    if (session.players.includes(player)) {
+    if (session.players.some((p) => p.id === playerId)) {
       return session;
     }
+
+    const player: Player =
+      role === 'agent'
+        ? createAgentPlayer(playerId)
+        : createOperatorPlayer(playerId, session.players);
+
     session.players.push(player);
     await this.updateSession(sessionCode, session);
     return session;
@@ -87,13 +104,13 @@ export class SessionService {
 
   async removePlayerFromSession(
     sessionCode: string,
-    player: string,
+    playerId: string,
   ): Promise<Session | null> {
     const session = await this.getSession(sessionCode);
     if (!session) {
       return null;
     }
-    session.players = session.players.filter((p) => p !== player);
+    session.players = session.players.filter((p) => p.id !== playerId);
     await this.updateSession(sessionCode, session);
     return session;
   }

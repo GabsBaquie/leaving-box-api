@@ -8,11 +8,14 @@ export class ModuleEntity {
   @Prop({ type: String, required: true })
   description: string;
 
-  @Prop({ type: [String], required: false })
-  rules?: string[];
+  @Prop({ type: String, required: true })
+  rules: string;
 
   @Prop({ type: String, required: false })
-  imgUrl?: string; 
+  imgUrl?: string;
+
+  @Prop({ type: [String], required: true })
+  solutions: string[];
 }
 
 export const ModuleSchema = SchemaFactory.createForClass(ModuleEntity);
