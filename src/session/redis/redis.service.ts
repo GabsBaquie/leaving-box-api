@@ -37,6 +37,10 @@ export class RedisService implements OnModuleInit {
   }
 
   async del(key: string): Promise<number> {
-    return this.client.del(key);
+    return await this.client.del(key);
+  }
+
+  async exists(key: string): Promise<number> {
+    return await this.client.exists(key);
   }
 }
