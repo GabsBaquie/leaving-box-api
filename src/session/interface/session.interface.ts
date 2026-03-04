@@ -1,9 +1,11 @@
-export type PlayerRole = 'agent' | 'operator';
+import { GameDifficulty, GameMode } from '../gameplay/types/gameplay.types';
+
+export type PlayerRole = 'agent' | 'analyste';
 
 export type Player = {
   id: string;
   role: PlayerRole;
-  label: string; // ex: operator 1, operator 2, agent
+  label: string; // ex: analyste 1, analyste 2, agent
 };
 
 export type OperatorAction = {
@@ -24,4 +26,6 @@ export interface Session {
   players: Player[];
   started: boolean;
   operatorActions?: OperatorAction[]; // Historique des actions des opérateurs
+  difficulty: GameDifficulty;
+  gameMode: GameMode;
 }

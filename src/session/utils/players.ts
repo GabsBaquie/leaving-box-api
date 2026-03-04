@@ -6,16 +6,16 @@ export const createAgentPlayer = (agentId: string): Player => ({
   label: 'agent',
 });
 
-export const createOperatorPlayer = (
-  operatorId: string,
+export const createAnalystePlayer = (
+  analysteId: string,
   existingPlayers: Player[],
 ): Player => {
-  const operatorsCount = existingPlayers.filter(
-    (p) => p.role === 'operator',
+  const analystesCount = existingPlayers.filter(
+    (p) => p.role === 'analyste',
   ).length;
   return {
-    id: operatorId,
-    role: 'operator',
-    label: `operator ${operatorsCount + 1}`,
+    id: analysteId,
+    role: 'analyste',
+    label: `analyste ${analystesCount + 1}`,
   };
 };

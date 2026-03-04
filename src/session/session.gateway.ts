@@ -6,29 +6,33 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { SessionService } from './session.service';
 import { ModuleService } from 'src/game/modules/module.service';
 import { Session } from './interface/session.interface';
-import {
-  buildSolutionsByOperator,
-  distributeSolutions,
-} from './utils/solutions-distribution';
+import { GameplayService } from './gameplay/gameplay.service';
 
 @WebSocketGateway({
   cors: {
     origin: '*',
     methods: ['GET', 'POST'],
     allowedHeaders: ['*'],
+    credentials: true,
   },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
 })
 export class SessionsGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
+  private readonly logger = new Logger(SessionsGateway.name);
+
   constructor(
     private readonly sessionService: SessionService,
     private readonly moduleService: ModuleService,
+    private readonly gameplayService: GameplayService,
   ) {}
 
   // Objet pour stocker les intervalles de timer par session
@@ -40,20 +44,45 @@ export class SessionsGateway implements OnGatewayDisconnect {
     @MessageBody()
     data: {
       difficulty: 'Easy' | 'Medium' | 'Hard';
-      role?: 'agent' | 'operator';
+      gameMode?: 'ONE_OPERATOR_ONE_MODULE' | 'RANDOM_ONE_MODULE_SPLIT';
+      role: 'agent' | 'analyste';
     },
     @ConnectedSocket() client: Socket,
   ) {
     try {
-      if (data.role && data.role !== 'agent') {
+      // Vérifier que le role est fourni
+      if (!data.role) {
+        return {
+          success: false,
+          message: 'Role is required',
+        };
+      }
+
+      // La difficulté doit être choisie par le joueur
+      if (!data.difficulty) {
+        return {
+          success: false,
+          message:
+            'Difficulty is required. Please choose Easy, Medium or Hard.',
+        };
+      }
+
+      const difficulty = data.difficulty;
+
+      // Vérifier que seul un agent peut créer une session
+      if (data.role !== 'agent') {
         return {
           success: false,
           message: 'Only an agent can create a session',
         };
       }
 
+      // Mode de jeu par défaut si non fourni
+      const gameMode = data.gameMode || 'ONE_OPERATOR_ONE_MODULE';
+
       const session = await this.sessionService.createSession({
-        difficulty: data.difficulty,
+        difficulty,
+        gameMode,
         agentId: client.id,
       });
       // Remove other rooms except the socket's own id.
@@ -66,7 +95,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       await client.join(session.code);
       client.emit('sessionCreated', session);
     } catch (error) {
-      console.error(error);
+      this.logger.error('Erreur lors de la création de session:', error);
       client.emit('error', { message: 'Failed to create session' });
     }
   }
@@ -88,7 +117,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
     // Si un opérateur envoie son chemin actuel, on peut détecter un retour en arrière
     if (data.currentPath) {
       const player = sessionData.players.find((p) => p.id === client.id);
-      if (player && player.role === 'operator') {
+      if (player && player.role === 'analyste') {
         // Enregistrer cette requête comme une action de navigation
         await this.sessionService.addOperatorAction(
           data.sessionCode,
@@ -113,7 +142,9 @@ export class SessionsGateway implements OnGatewayDisconnect {
             autoDetected: true,
           };
 
-          const agentSocket = this.server.sockets.sockets.get(sessionData.agentId);
+          const agentSocket = this.server.sockets.sockets.get(
+            sessionData.agentId,
+          );
           if (agentSocket) {
             agentSocket.emit('operatorBackNavigation', backNavData);
           }
@@ -154,7 +185,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
     const session = await this.sessionService.addPlayerToSession(
       data.sessionCode,
       client.id,
-      'operator',
+      'analyste',
     );
     if (!session) {
       return {
@@ -163,9 +194,18 @@ export class SessionsGateway implements OnGatewayDisconnect {
       };
     }
 
+    const player = session.players.find((p) => p.id === client.id);
+    if (!player) {
+      return {
+        success: false,
+        message: 'Failed to add player to session',
+      };
+    }
+
     this.server.to(data.sessionCode).emit('playerJoined', {
       playerId: client.id,
-      playerLabel: session.players.find((p) => p.id === client.id)?.label,
+      playerLabel: player.label,
+      playerRole: player.role, // OBLIGATOIRE
       session,
     });
 
@@ -231,37 +271,47 @@ export class SessionsGateway implements OnGatewayDisconnect {
       (await this.sessionService.updateSession(data.sessionCode, {
         started: true,
       })) ?? session;
-    const operators = updatedSession.players.filter(
-      (p) => p.role === 'operator',
+    const analystes = updatedSession.players.filter(
+      (p) => p.role === 'analyste',
     );
-    if (operators.length === 0) {
+    if (analystes.length === 0) {
       return {
         success: false,
-        message: 'At least one operator is required to start the game',
+        message: 'At least one analyste is required to start the game',
       };
     }
 
-    const moduleManuals = await this.moduleService.findSome(5);
-    const recipients = operators.map((op) => op.id);
-    const solutionsDistribution = distributeSolutions(
-      moduleManuals,
-      recipients,
-    );
-    const solutionsByOperator = buildSolutionsByOperator(solutionsDistribution);
-    const moduleManualsWithoutSolutions = moduleManuals.map((m) => {
-      const plain = { ...(m as unknown as Record<string, unknown>) };
-      delete plain.solutions;
-      return plain;
-    });
+    try {
+      // Utiliser le service de gameplay pour démarrer la partie
+      const analysteIds = analystes.map((a) => a.id);
+      // Valeurs par défaut pour compatibilité avec les anciennes sessions
+      const difficulty = session.difficulty || 'Medium';
+      const gameMode = session.gameMode || 'ONE_OPERATOR_ONE_MODULE';
 
-    this.server.to(data.sessionCode).emit('gameStarted', {
-      session: updatedSession,
-      moduleManuals: moduleManualsWithoutSolutions,
-      solutionsDistribution,
-      solutionsByOperator,
-    });
+      const gameplayResult = await this.gameplayService.startGameWithOperators(
+        {
+          difficulty,
+          gameMode,
+        },
+        analysteIds,
+      );
 
-    return { success: true };
+      this.server.to(data.sessionCode).emit('gameStarted', {
+        session: updatedSession,
+        moduleManuals: gameplayResult.moduleManuals,
+        solutionsDistribution: gameplayResult.solutionsDistribution,
+        solutionsByOperator: gameplayResult.solutionsByOperator,
+      });
+
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Erreur lors du démarrage du jeu:', error);
+      return {
+        success: false,
+        message:
+          error instanceof Error ? error.message : 'Failed to start the game',
+      };
+    }
   }
 
   @SubscribeMessage('clearSession')
@@ -293,7 +343,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
       return { success: true };
     } catch (error) {
-      console.error('Failed to clear session:', error);
+      this.logger.error('Erreur lors de la suppression de session:', error);
       return { success: false, message: 'Failed to clear session' };
     }
   }
@@ -310,11 +360,11 @@ export class SessionsGateway implements OnGatewayDisconnect {
         message: `Session with code ${data.sessionCode} does not exist`,
       };
     }
-    const operators = session.players.filter((p) => p.role === 'operator');
-    if (operators.length === 0) {
+    const analystes = session.players.filter((p) => p.role === 'analyste');
+    if (analystes.length === 0) {
       return {
         success: false,
-        message: 'At least one operator is required to start the timer',
+        message: 'At least one analyste is required to start the timer',
       };
     }
     if (session.agentId !== client.id) {
@@ -388,10 +438,10 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
       // Vérifier que le client est un opérateur dans cette session
       const player = session.players.find((p) => p.id === client.id);
-      if (!player || player.role !== 'operator') {
+      if (!player || player.role !== 'analyste') {
         return {
           success: false,
-          message: 'Only operators can send actions',
+          message: 'Only analystes can send actions',
         };
       }
 
@@ -434,16 +484,22 @@ export class SessionsGateway implements OnGatewayDisconnect {
         if (agentSocket) {
           agentSocket.emit('operatorBackNavigation', backNavData);
         } else {
-          console.warn('Agent not connected for auto-detected back navigation', {
-            sessionCode: data.sessionCode,
-            agentId: session.agentId,
-          });
+          this.logger.warn(
+            'Agent non connecté pour la détection automatique du retour en arrière',
+            {
+              sessionCode: data.sessionCode,
+              agentId: session.agentId,
+            },
+          );
         }
       }
 
       return { success: true };
     } catch (error) {
-      console.error('Error handling operator action:', error);
+      this.logger.error(
+        "Erreur lors du traitement de l'action opérateur:",
+        error,
+      );
       return {
         success: false,
         message: 'Failed to process action',
@@ -480,7 +536,9 @@ export class SessionsGateway implements OnGatewayDisconnect {
     try {
       const session = await this.sessionService.getSession(data.sessionCode);
       if (!session) {
-        console.error('Session not found', { sessionCode: data.sessionCode });
+        this.logger.error('Session non trouvée', {
+          sessionCode: data.sessionCode,
+        });
         return {
           success: false,
           message: `Session with code ${data.sessionCode} does not exist`,
@@ -490,7 +548,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       // Vérifier que le client est dans la session
       const player = session.players.find((p) => p.id === client.id);
       if (!player) {
-        console.error('Player not found in session', {
+        this.logger.error('Joueur non trouvé dans la session', {
           clientId: client.id,
           sessionCode: data.sessionCode,
         });
@@ -519,14 +577,14 @@ export class SessionsGateway implements OnGatewayDisconnect {
       }
 
       // Si c'est un opérateur, on enregistre et on notifie l'agent
-      if (player.role !== 'operator') {
-        console.error('Invalid role for back navigation', {
+      if (player.role !== 'analyste') {
+        this.logger.error('Rôle invalide pour le retour en arrière', {
           clientId: client.id,
           role: player.role,
         });
         return {
           success: false,
-          message: 'Only operators and agents can report back navigation',
+          message: 'Only analystes and agents can report back navigation',
         };
       }
 
@@ -544,7 +602,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       );
 
       if (!updatedSession) {
-        console.error('Failed to add operator action');
+        this.logger.error("Échec de l'ajout de l'action opérateur");
         return {
           success: false,
           message: 'Failed to record back navigation',
@@ -566,7 +624,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       if (agentSocket) {
         agentSocket.emit('operatorBackNavigation', backNavData);
       } else {
-        console.warn('Agent not connected for back navigation', {
+        this.logger.warn('Agent non connecté pour le retour en arrière', {
           sessionCode: data.sessionCode,
           agentId: session.agentId,
         });
@@ -582,7 +640,10 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
       return { success: true, data: backNavData };
     } catch (error) {
-      console.error('Error handling back navigation:', error);
+      this.logger.error(
+        'Erreur lors du traitement du retour en arrière:',
+        error,
+      );
       return {
         success: false,
         message: 'Failed to report back navigation',
@@ -630,7 +691,10 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
       return { success: true };
     } catch (error) {
-      console.error('Error getting operator actions:', error);
+      this.logger.error(
+        'Erreur lors de la récupération des actions opérateur:',
+        error,
+      );
       return {
         success: false,
         message: 'Failed to get operator actions',
@@ -651,7 +715,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
         // Arrêter le timer
         clearInterval(interval);
         delete this.sessionTimers[sessionCode];
-        console.log('Timer stopped', {
+        this.logger.log('Timer arrêté', {
           sessionCode,
           reason: timerCheck.reason,
         });
@@ -726,7 +790,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
         // Si la session doit être fermée
         if (removalResult.shouldClose && removalResult.reason) {
-          console.log('Session closing due to disconnect', {
+          this.logger.warn('Fermeture de session due à la déconnexion', {
             sessionCode,
             disconnectedPlayerId: client.id,
             disconnectedPlayerRole: player.role,
@@ -743,7 +807,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
         });
       }
     } catch (error) {
-      console.error('Error handling disconnect:', error);
+      this.logger.error('Erreur lors de la gestion de la déconnexion:', error);
     }
   }
 
@@ -767,9 +831,9 @@ export class SessionsGateway implements OnGatewayDisconnect {
       // Éjecter tous les sockets de la room
       this.server.to(sessionCode).socketsLeave(sessionCode);
 
-      console.log('Session closed', { sessionCode, reason });
+      this.logger.log('Session fermée', { sessionCode, reason });
     } catch (error) {
-      console.error('Error closing session:', error);
+      this.logger.error('Erreur lors de la fermeture de session:', error);
     }
   }
 
@@ -785,17 +849,17 @@ export class SessionsGateway implements OnGatewayDisconnect {
     reason?: string;
   } {
     const hasAgent = session.players.some((p) => p.role === 'agent');
-    const hasOperator = session.players.some((p) => p.role === 'operator');
-    const isValid = hasAgent && hasOperator;
+    const hasAnalyste = session.players.some((p) => p.role === 'analyste');
+    const isValid = hasAgent && hasAnalyste;
 
     let reason: string | undefined;
     if (!isValid) {
       reason = !hasAgent
         ? "L'agent a quitté la session"
-        : 'Tous les opérateurs ont quitté la session';
+        : 'Tous les analystes ont quitté la session';
     }
 
-    return { isValid, hasAgent, hasOperator, reason };
+    return { isValid, hasAgent, hasOperator: hasAnalyste, reason };
   }
 
   /**
@@ -828,13 +892,13 @@ export class SessionsGateway implements OnGatewayDisconnect {
     operatorCount: number;
   } {
     const agents = session.players.filter((p) => p.role === 'agent');
-    const operators = session.players.filter((p) => p.role === 'operator');
+    const analystes = session.players.filter((p) => p.role === 'analyste');
 
     return {
       agents,
-      operators,
+      operators: analystes,
       agentCount: agents.length,
-      operatorCount: operators.length,
+      operatorCount: analystes.length,
     };
   }
 

@@ -11,7 +11,7 @@ Gateway : `SessionsGateway` (Socket.IO) avec CORS ouvert. Les sockets rejoignent
   Réponse directe `{ success }` ou message d’erreur.
 - `joinSession` `{ sessionCode, player }`  
   Force le socket à quitter ses autres rooms (hors ID propre), rejoint `sessionCode`. Ajoute un operator `{ id: socket.id, role: operator, label: operator N }`.  
-  Diffusion : `playerJoined` (avec `playerId`, `playerLabel`). Log console de la liste `players`.
+  Diffusion : `playerJoined` (avec `playerId`, `playerLabel`, `playerRole` obligatoire). Log console de la liste `players`.
 - `leaveSession` `{ sessionCode, player }`  
   Retire le joueur de Redis, quitte la room, diffuse `playerLeft`.
 - `startGame` `{ sessionCode }` **(agent uniquement)**  
@@ -26,7 +26,7 @@ Gateway : `SessionsGateway` (Socket.IO) avec CORS ouvert. Les sockets rejoignent
 ### Événements serveur → client
 - `sessionCreated` `{ session }`
 - `currentSession` `{ sessionCode, sessionData, connectedClients }`
-- `playerJoined` `{ playerId, playerLabel, session }`
+- `playerJoined` `{ playerId, playerLabel, playerRole, session }` - `playerRole` est obligatoire
 - `playerLeft` `{ playerId, session }`
 - `gameStarted` `{ session, moduleManuals (sans solutions), solutionsDistribution, solutionsByOperator }`
 - `sessionCleared` `{ sessionCode }`

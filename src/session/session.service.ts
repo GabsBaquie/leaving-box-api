@@ -7,11 +7,12 @@ import {
 } from 'src/session/interface/session.interface';
 import {
   createAgentPlayer,
-  createOperatorPlayer,
+  createAnalystePlayer,
 } from 'src/session/utils/players';
 import { RedisService } from 'src/session/redis/redis.service';
 import CreateSessionDto from 'src/session/ressource/createSession.ressource';
 import { v4 as uuidv4 } from 'uuid';
+import { getDifficultyConfig } from './gameplay/config/difficulty.config';
 
 @Injectable()
 export class SessionService {
@@ -21,20 +22,12 @@ export class SessionService {
 
   async createSession({
     difficulty,
+    gameMode,
     agentId,
   }: CreateSessionDto): Promise<Session> {
     const code = uuidv4().replace(/-/g, '').slice(0, 6).toUpperCase();
-    let maxTime = 900;
-    if (difficulty === 'Easy') {
-      maxTime = 900;
-    }
-    if (difficulty === 'Medium') {
-      maxTime = 600;
-    }
-    if (difficulty === 'Hard') {
-      // maxTime = 480;
-      maxTime = 60;
-    }
+    const difficultyConfig = getDifficultyConfig(difficulty);
+    const maxTime = difficultyConfig.maxTime;
     const agentPlayer: Player = createAgentPlayer(agentId);
 
     const newSession: Session = {
@@ -48,6 +41,8 @@ export class SessionService {
       players: [agentPlayer],
       started: false,
       operatorActions: [],
+      difficulty,
+      gameMode,
     };
     await this.redisService.set(`session:${code}`, JSON.stringify(newSession));
     return newSession;
@@ -59,7 +54,18 @@ export class SessionService {
 
   async getSession(sessionCode: string): Promise<Session | null> {
     const sessionData = await this.redisService.get(`session:${sessionCode}`);
-    return sessionData ? (JSON.parse(sessionData) as Session) : null;
+    if (!sessionData) {
+      return null;
+    }
+    const session = JSON.parse(sessionData) as Session;
+    // Migration : ajouter les champs manquants pour les anciennes sessions
+    if (!session.difficulty) {
+      session.difficulty = 'Medium';
+    }
+    if (!session.gameMode) {
+      session.gameMode = 'ONE_OPERATOR_ONE_MODULE';
+    }
+    return session;
   }
 
   async updateSession(
@@ -105,7 +111,7 @@ export class SessionService {
     const player: Player =
       role === 'agent'
         ? createAgentPlayer(playerId)
-        : createOperatorPlayer(playerId, session.players);
+        : createAnalystePlayer(playerId, session.players);
 
     session.players.push(player);
     await this.updateSession(sessionCode, session);
@@ -224,7 +230,7 @@ export class SessionService {
     operatorId: string,
   ): Promise<boolean> {
     const actions = await this.getOperatorActions(sessionCode, operatorId);
-    
+
     if (actions.length < 2) {
       return false;
     }
@@ -240,12 +246,14 @@ export class SessionService {
 
     // 2. Si l'action actuelle est 'navigate' ou 'getSession' et qu'elle correspond à une action antérieure
     if (
-      (lastAction.action === 'navigate' || lastAction.action === 'getSession') &&
+      (lastAction.action === 'navigate' ||
+        lastAction.action === 'getSession') &&
       lastAction.data
     ) {
-      const currentState = lastAction.data.state || lastAction.data.path || lastAction.data.url;
+      const currentState =
+        lastAction.data.state || lastAction.data.path || lastAction.data.url;
       const currentPath = lastAction.data.path || lastAction.data.url;
-      
+
       if (currentState || currentPath) {
         // Chercher si cet état a déjà été visité avant la dernière action
         // On cherche dans les 20 dernières actions pour détecter les retours en arrière
@@ -253,12 +261,16 @@ export class SessionService {
         for (let i = actions.length - 3; i >= searchLimit; i--) {
           const pastAction = actions[i];
           if (
-            (pastAction.action === 'navigate' || pastAction.action === 'getSession') &&
+            (pastAction.action === 'navigate' ||
+              pastAction.action === 'getSession') &&
             pastAction.data
           ) {
-            const pastState = pastAction.data.state || pastAction.data.path || pastAction.data.url;
+            const pastState =
+              pastAction.data.state ||
+              pastAction.data.path ||
+              pastAction.data.url;
             const pastPath = pastAction.data.path || pastAction.data.url;
-            
+
             // Comparer les états/paths
             if (
               (currentState && pastState && currentState === pastState) ||
@@ -266,9 +278,13 @@ export class SessionService {
             ) {
               // Vérifier que ce n'est pas juste une navigation normale vers la même page
               // Si l'action précédente était différente, c'est probablement un retour en arrière
-              const prevState = previousAction.data?.state || previousAction.data?.path || previousAction.data?.url;
-              const prevPath = previousAction.data?.path || previousAction.data?.url;
-              
+              const prevState =
+                previousAction.data?.state ||
+                previousAction.data?.path ||
+                previousAction.data?.url;
+              const prevPath =
+                previousAction.data?.path || previousAction.data?.url;
+
               if (
                 previousAction.action !== 'navigate' &&
                 previousAction.action !== 'getSession'
@@ -276,7 +292,7 @@ export class SessionService {
                 // Si l'action précédente n'était pas une navigation, c'est probablement un retour
                 return true;
               }
-              
+
               if (
                 (currentState && prevState && currentState !== prevState) ||
                 (currentPath && prevPath && currentPath !== prevPath)

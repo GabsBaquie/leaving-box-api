@@ -22,7 +22,8 @@ Cette documentation détaille tous les sockets disponibles dans l'API, ce que le
 ```typescript
 {
   difficulty: 'Easy' | 'Medium' | 'Hard';
-  role?: 'agent' | 'operator'; // Optionnel, mais si fourni, doit être 'agent'
+  gameMode?: 'ONE_OPERATOR_ONE_MODULE' | 'RANDOM_ONE_MODULE_SPLIT'; // Optionnel, défaut: 'ONE_OPERATOR_ONE_MODULE'
+  role: 'agent' | 'operator'; // OBLIGATOIRE - doit être 'agent' pour créer une session
 }
 ```
 
@@ -133,6 +134,7 @@ socket.on('currentSession', (data) => {
     {
       playerId: string;
       playerLabel: string; // ex: "operator 1"
+      playerRole: 'agent' | 'operator'; // OBLIGATOIRE - rôle du joueur
       session: Session; // Session mise à jour avec le nouveau joueur
     }
     ```
@@ -147,6 +149,8 @@ socket.emit('joinSession', {
 
 socket.on('playerJoined', (data) => {
   console.log('Nouveau joueur:', data.playerLabel);
+  console.log('Rôle:', data.playerRole);
+  // data = { playerId, playerLabel, playerRole, session }
 });
 ```
 
@@ -657,7 +661,7 @@ Ces événements sont émis automatiquement par le serveur et doivent être éco
 ### 3. `playerJoined`
 - **Émis quand** : Un nouveau joueur rejoint la session
 - **Reçu par** : TOUS les clients de la session
-- **Données** : `{ playerId, playerLabel, session }`
+- **Données** : `{ playerId, playerLabel, playerRole, session }` - `playerRole` est obligatoire
 
 ### 4. `playerLeft`
 - **Émis quand** : Un joueur quitte la session (volontairement ou par déconnexion)
