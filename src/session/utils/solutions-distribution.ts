@@ -1,13 +1,16 @@
 import { ModuleEntity } from 'src/game/modules/module.schema';
 
+/** Format envoyé au frontend : index (1-based) + texte pour afficher "Solution 3" */
+export type SolutionWithIndex = { index: number; text: string };
+
 export type SolutionsDistribution = {
   moduleId: string;
-  allocations: Record<string, string[]>;
+  allocations: Record<string, SolutionWithIndex[]>;
 };
 
-export type SolutionsByOperator = Record<
+export type SolutionsByAnalyste = Record<
   string,
-  Array<{ moduleId: string; solutions: string[] }>
+  Array<{ moduleId: string; solutions: SolutionWithIndex[] }>
 >;
 
 export const distributeSolutions = (
@@ -16,7 +19,7 @@ export const distributeSolutions = (
 ): SolutionsDistribution[] => {
   return modules.map((module) => {
     const steps = module.solutions ?? [];
-    const allocations: Record<string, string[]> = {};
+    const allocations: Record<string, SolutionWithIndex[]> = {};
     recipientIds.forEach((id) => {
       allocations[id] = [];
     });
@@ -30,7 +33,7 @@ export const distributeSolutions = (
 
     steps.forEach((step, idx) => {
       const target = recipientIds[idx % recipientIds.length];
-      allocations[target].push(step);
+      allocations[target].push({ index: idx + 1, text: step });
     });
 
     return {
@@ -40,21 +43,21 @@ export const distributeSolutions = (
   });
 };
 
-export const buildSolutionsByOperator = (
+export const buildSolutionsByAnalyste = (
   distribution: SolutionsDistribution[],
-): SolutionsByOperator => {
-  const byOperator: SolutionsByOperator = {};
+): SolutionsByAnalyste => {
+  const byAnalyste: SolutionsByAnalyste = {};
 
   distribution.forEach(({ moduleId, allocations }) => {
-    Object.entries(allocations).forEach(([operatorId, steps]) => {
-      if (!byOperator[operatorId]) {
-        byOperator[operatorId] = [];
+    Object.entries(allocations).forEach(([analysteId, steps]) => {
+      if (!byAnalyste[analysteId]) {
+        byAnalyste[analysteId] = [];
       }
-      byOperator[operatorId].push({ moduleId, solutions: steps });
+      byAnalyste[analysteId].push({ moduleId, solutions: steps });
     });
   });
 
-  return byOperator;
+  return byAnalyste;
 };
 
 const getModuleId = (module: ModuleEntity): string => {

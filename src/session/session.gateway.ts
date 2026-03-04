@@ -300,7 +300,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
         session: updatedSession,
         moduleManuals: gameplayResult.moduleManuals,
         solutionsDistribution: gameplayResult.solutionsDistribution,
-        solutionsByOperator: gameplayResult.solutionsByOperator,
+        solutionsByAnalyste: gameplayResult.solutionsByAnalyste,
       });
 
       return { success: true };

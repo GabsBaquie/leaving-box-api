@@ -3,7 +3,7 @@ import { ModuleEntity } from 'src/game/modules/module.schema';
 import { ModuleService } from 'src/game/modules/module.service';
 import {
   SolutionsDistribution,
-  SolutionsByOperator,
+  SolutionsByAnalyste,
 } from 'src/session/utils/solutions-distribution';
 import { GameplayConfig } from './types/gameplay.types';
 import { getDifficultyConfig } from './config/difficulty.config';
@@ -13,7 +13,7 @@ import { createSolutionDistributionStrategy } from './strategies/solution-distri
 export type GameStartResult = {
   moduleManuals: Omit<ModuleEntity, 'solutions'>[];
   solutionsDistribution: SolutionsDistribution[];
-  solutionsByOperator: SolutionsByOperator;
+  solutionsByAnalyste: SolutionsByAnalyste;
 };
 
 @Injectable()
@@ -71,7 +71,7 @@ export class GameplayService {
     const solutionDistributionStrategy = createSolutionDistributionStrategy(
       config.gameMode,
     );
-    const { solutionsDistribution, solutionsByOperator } =
+    const { solutionsDistribution, solutionsByAnalyste } =
       solutionDistributionStrategy.distribute(selectedModules, operatorIds);
 
     // Retirer les solutions des modules pour l'affichage public
@@ -84,24 +84,18 @@ export class GameplayService {
     return {
       moduleManuals,
       solutionsDistribution,
-      solutionsByOperator,
+      solutionsByAnalyste,
     };
   }
 
   /**
-   * Démarre une partie avec les IDs réels des opérateurs
+   * Démarre une partie avec les IDs réels des analystes
    */
   async startGameWithOperators(
     config: GameplayConfig,
     operatorIds: string[],
   ): Promise<GameStartResult> {
-    // Récupérer tous les modules disponibles depuis MongoDB
-    this.logger.log('Récupération des modules depuis la base de données...');
     const allModules = await this.moduleService.findAll();
-
-    this.logger.log(
-      `Modules récupérés: ${allModules.length} module(s) trouvé(s)`,
-    );
 
     if (allModules.length === 0) {
       this.logger.error('Aucun module disponible dans la base de données');
@@ -109,11 +103,6 @@ export class GameplayService {
         'Aucun module disponible dans la base de données. Veuillez créer des modules via POST /module ou exécuter le script de seed.',
       );
     }
-
-    // Log des modules récupérés (sans les solutions pour la sécurité)
-    this.logger.log(
-      `Modules disponibles: ${allModules.map((m) => m.name).join(', ')}`,
-    );
 
     if (operatorIds.length === 0) {
       throw new Error('Au moins un opérateur est requis pour démarrer le jeu');
@@ -136,7 +125,7 @@ export class GameplayService {
     const solutionDistributionStrategy = createSolutionDistributionStrategy(
       config.gameMode,
     );
-    const { solutionsDistribution, solutionsByOperator } =
+    const { solutionsDistribution, solutionsByAnalyste } =
       solutionDistributionStrategy.distribute(selectedModules, operatorIds);
 
     // Retirer les solutions des modules pour l'affichage public
@@ -149,7 +138,7 @@ export class GameplayService {
     return {
       moduleManuals,
       solutionsDistribution,
-      solutionsByOperator,
+      solutionsByAnalyste,
     };
   }
 }

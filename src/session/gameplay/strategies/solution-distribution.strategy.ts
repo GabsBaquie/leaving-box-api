@@ -1,7 +1,8 @@
 import { ModuleEntity } from 'src/game/modules/module.schema';
 import {
   SolutionsDistribution,
-  SolutionsByOperator,
+  SolutionsByAnalyste,
+  SolutionWithIndex,
 } from 'src/session/utils/solutions-distribution';
 import { GameMode } from '../types/gameplay.types';
 
@@ -11,7 +12,7 @@ export interface SolutionDistributionStrategy {
     recipientIds: string[],
   ): {
     solutionsDistribution: SolutionsDistribution[];
-    solutionsByOperator: SolutionsByOperator;
+    solutionsByAnalyste: SolutionsByAnalyste;
   };
 }
 
@@ -30,99 +31,98 @@ export class OneOperatorOneModuleDistributionStrategy
     recipientIds: string[],
   ): {
     solutionsDistribution: SolutionsDistribution[];
-    solutionsByOperator: SolutionsByOperator;
+    solutionsByAnalyste: SolutionsByAnalyste;
   } {
     const solutionsDistribution: SolutionsDistribution[] = [];
-    const solutionsByOperator: SolutionsByOperator = {};
+    const solutionsByAnalyste: SolutionsByAnalyste = {};
 
-    // Initialiser les allocations pour chaque opérateur
+    // Initialiser les allocations pour chaque analyste
     recipientIds.forEach((id) => {
-      solutionsByOperator[id] = [];
+      solutionsByAnalyste[id] = [];
     });
 
     if (modules.length === 0) {
-      return { solutionsDistribution, solutionsByOperator };
+      return { solutionsDistribution, solutionsByAnalyste };
     }
 
-    const operatorCount = recipientIds.length;
+    const analysteCount = recipientIds.length;
 
-    // Cas spécial : 3 opérateurs
-    // 3 modules individuels (Op1, Op2, Op3) + 1 module partagé (toutes les solutions à tous)
-    if (operatorCount === 3 && modules.length >= 3) {
-      // Module 1 → Opérateur 1 (toutes les solutions)
-      this.assignModuleToOperator(
+    // Cas spécial : 3 analystes
+    // 3 modules individuels + 1 module partagé (toutes les solutions à tous)
+    if (analysteCount === 3 && modules.length >= 3) {
+      this.assignModuleToAnalyste(
         modules[0],
         recipientIds[0],
         solutionsDistribution,
-        solutionsByOperator,
+        solutionsByAnalyste,
       );
 
-      // Module 2 → Opérateur 2 (toutes les solutions)
-      this.assignModuleToOperator(
+      this.assignModuleToAnalyste(
         modules[1],
         recipientIds[1],
         solutionsDistribution,
-        solutionsByOperator,
+        solutionsByAnalyste,
       );
 
-      // Module 3 → Opérateur 3 (toutes les solutions)
-      this.assignModuleToOperator(
+      this.assignModuleToAnalyste(
         modules[2],
         recipientIds[2],
         solutionsDistribution,
-        solutionsByOperator,
+        solutionsByAnalyste,
       );
 
-      // Module 4 (si présent) → Partagé entre tous (toutes les solutions à tous)
       if (modules.length >= 4) {
         this.distributeModuleToAll(
           modules[3],
           recipientIds,
           solutionsDistribution,
-          solutionsByOperator,
+          solutionsByAnalyste,
         );
       }
 
-      return { solutionsDistribution, solutionsByOperator };
+      return { solutionsDistribution, solutionsByAnalyste };
     }
 
     // Cas général : round-robin sur tous les modules
     modules.forEach((module, moduleIndex) => {
-      const operatorIndex = moduleIndex % recipientIds.length;
-      const operatorId = recipientIds[operatorIndex];
-      this.assignModuleToOperator(
+      const analysteIndex = moduleIndex % recipientIds.length;
+      const analysteId = recipientIds[analysteIndex];
+      this.assignModuleToAnalyste(
         module,
-        operatorId,
+        analysteId,
         solutionsDistribution,
-        solutionsByOperator,
+        solutionsByAnalyste,
       );
     });
 
-    return { solutionsDistribution, solutionsByOperator };
+    return { solutionsDistribution, solutionsByAnalyste };
   }
 
-  private assignModuleToOperator(
+  private assignModuleToAnalyste(
     module: ModuleEntity,
-    operatorId: string,
+    analysteId: string,
     solutionsDistribution: SolutionsDistribution[],
-    solutionsByOperator: SolutionsByOperator,
+    solutionsByAnalyste: SolutionsByAnalyste,
   ): void {
     const moduleId = this.getModuleId(module);
     const allSolutions = module.solutions ?? [];
+    const solutionsWithIndex: SolutionWithIndex[] = allSolutions.map(
+      (text, i) => ({ index: i + 1, text }),
+    );
 
     solutionsDistribution.push({
       moduleId,
       allocations: {
-        [operatorId]: allSolutions,
+        [analysteId]: solutionsWithIndex,
       },
     });
 
-    if (!solutionsByOperator[operatorId]) {
-      solutionsByOperator[operatorId] = [];
+    if (!solutionsByAnalyste[analysteId]) {
+      solutionsByAnalyste[analysteId] = [];
     }
-    solutionsByOperator[operatorId].push({
+    solutionsByAnalyste[analysteId].push({
       moduleId,
-      solutions: allSolutions,
+      solutions: solutionsWithIndex,
     });
   }
 
@@ -130,22 +130,20 @@ export class OneOperatorOneModuleDistributionStrategy
     module: ModuleEntity,
     recipientIds: string[],
     solutionsDistribution: SolutionsDistribution[],
-    solutionsByOperator: SolutionsByOperator,
+    solutionsByAnalyste: SolutionsByAnalyste,
   ): void {
     const moduleId = this.getModuleId(module);
     const steps = module.solutions ?? [];
-    const allocations: Record<string, string[]> = {};
+    const allocations: Record<string, SolutionWithIndex[]> = {};
 
-    // Initialiser les allocations vides
     recipientIds.forEach((id) => {
       allocations[id] = [];
     });
 
-    // Répartir les solutions en round-robin
     if (steps.length > 0 && recipientIds.length > 0) {
       steps.forEach((step, idx) => {
         const target = recipientIds[idx % recipientIds.length];
-        allocations[target].push(step);
+        allocations[target].push({ index: idx + 1, text: step });
       });
     }
 
@@ -154,13 +152,12 @@ export class OneOperatorOneModuleDistributionStrategy
       allocations,
     });
 
-    // Construire le mapping par opérateur
-    Object.entries(allocations).forEach(([operatorId, solutions]) => {
-      if (!solutionsByOperator[operatorId]) {
-        solutionsByOperator[operatorId] = [];
+    Object.entries(allocations).forEach(([analysteId, solutions]) => {
+      if (!solutionsByAnalyste[analysteId]) {
+        solutionsByAnalyste[analysteId] = [];
       }
       if (solutions.length > 0) {
-        solutionsByOperator[operatorId].push({
+        solutionsByAnalyste[analysteId].push({
           moduleId,
           solutions,
         });
@@ -169,21 +166,23 @@ export class OneOperatorOneModuleDistributionStrategy
   }
 
   /**
-   * Distribue un module à tous les opérateurs (toutes les solutions à chacun)
+   * Distribue un module à tous les analystes (toutes les solutions à chacun)
    */
   private distributeModuleToAll(
     module: ModuleEntity,
     recipientIds: string[],
     solutionsDistribution: SolutionsDistribution[],
-    solutionsByOperator: SolutionsByOperator,
+    solutionsByAnalyste: SolutionsByAnalyste,
   ): void {
     const moduleId = this.getModuleId(module);
     const allSolutions = module.solutions ?? [];
-    const allocations: Record<string, string[]> = {};
+    const solutionsWithIndex: SolutionWithIndex[] = allSolutions.map(
+      (text, i) => ({ index: i + 1, text }),
+    );
+    const allocations: Record<string, SolutionWithIndex[]> = {};
 
-    // Chaque opérateur reçoit toutes les solutions
     recipientIds.forEach((id) => {
-      allocations[id] = [...allSolutions];
+      allocations[id] = [...solutionsWithIndex];
     });
 
     solutionsDistribution.push({
@@ -191,15 +190,14 @@ export class OneOperatorOneModuleDistributionStrategy
       allocations,
     });
 
-    // Construire le mapping par opérateur
-    recipientIds.forEach((operatorId) => {
-      if (!solutionsByOperator[operatorId]) {
-        solutionsByOperator[operatorId] = [];
+    recipientIds.forEach((analysteId) => {
+      if (!solutionsByAnalyste[analysteId]) {
+        solutionsByAnalyste[analysteId] = [];
       }
-      if (allSolutions.length > 0) {
-        solutionsByOperator[operatorId].push({
+      if (solutionsWithIndex.length > 0) {
+        solutionsByAnalyste[analysteId].push({
           moduleId,
-          solutions: allSolutions,
+          solutions: solutionsWithIndex,
         });
       }
     });
@@ -229,36 +227,33 @@ export class RandomOneModuleSplitDistributionStrategy
     recipientIds: string[],
   ): {
     solutionsDistribution: SolutionsDistribution[];
-    solutionsByOperator: SolutionsByOperator;
+    solutionsByAnalyste: SolutionsByAnalyste;
   } {
     const solutionsDistribution: SolutionsDistribution[] = [];
-    const solutionsByOperator: SolutionsByOperator = {};
+    const solutionsByAnalyste: SolutionsByAnalyste = {};
 
-    // Initialiser les allocations pour chaque opérateur
     recipientIds.forEach((id) => {
-      solutionsByOperator[id] = [];
+      solutionsByAnalyste[id] = [];
     });
 
     if (modules.length === 0) {
-      return { solutionsDistribution, solutionsByOperator };
+      return { solutionsDistribution, solutionsByAnalyste };
     }
 
-    // Pour chaque module, répartir ses solutions en round-robin entre tous les opérateurs
+    // Pour chaque module, répartir ses solutions en round-robin entre tous les analystes
     modules.forEach((module) => {
       const moduleId = this.getModuleId(module);
       const steps = module.solutions ?? [];
-      const allocations: Record<string, string[]> = {};
+      const allocations: Record<string, SolutionWithIndex[]> = {};
 
-      // Initialiser les allocations vides pour ce module
       recipientIds.forEach((id) => {
         allocations[id] = [];
       });
 
-      // Répartir les solutions de ce module en round-robin
       if (steps.length > 0 && recipientIds.length > 0) {
         steps.forEach((step, idx) => {
           const target = recipientIds[idx % recipientIds.length];
-          allocations[target].push(step);
+          allocations[target].push({ index: idx + 1, text: step });
         });
       }
 
@@ -267,13 +262,12 @@ export class RandomOneModuleSplitDistributionStrategy
         allocations,
       });
 
-      // Construire le mapping par opérateur pour ce module
-      Object.entries(allocations).forEach(([operatorId, solutions]) => {
-        if (!solutionsByOperator[operatorId]) {
-          solutionsByOperator[operatorId] = [];
+      Object.entries(allocations).forEach(([analysteId, solutions]) => {
+        if (!solutionsByAnalyste[analysteId]) {
+          solutionsByAnalyste[analysteId] = [];
         }
         if (solutions.length > 0) {
-          solutionsByOperator[operatorId].push({
+          solutionsByAnalyste[analysteId].push({
             moduleId,
             solutions,
           });
@@ -281,7 +275,7 @@ export class RandomOneModuleSplitDistributionStrategy
       });
     });
 
-    return { solutionsDistribution, solutionsByOperator };
+    return { solutionsDistribution, solutionsByAnalyste };
   }
 
   private getModuleId(module: ModuleEntity): string {
