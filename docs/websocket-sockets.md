@@ -23,7 +23,7 @@ Cette documentation détaille tous les sockets disponibles dans l'API, ce que le
 {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   gameMode?: 'ONE_OPERATOR_ONE_MODULE' | 'RANDOM_ONE_MODULE_SPLIT'; // Optionnel, défaut: 'ONE_OPERATOR_ONE_MODULE'
-  role: 'agent' | 'operator'; // OBLIGATOIRE - doit être 'agent' pour créer une session
+  role: 'agent' | 'analyste'; // OBLIGATOIRE - doit être 'agent' pour créer une session
 }
 ```
 
@@ -123,7 +123,7 @@ socket.on('currentSession', (data) => {
 **Comportement** :
 - Le client quitte toutes les autres rooms (sauf sa propre room)
 - Le client rejoint la room de la session
-- Un nouveau joueur opérateur est ajouté à la session avec un label automatique (ex: "operator 1", "operator 2")
+- Un nouveau joueur analyste est ajouté à la session avec un label automatique (ex: "analyste 1", "analyste 2")
 - Tous les clients de la session sont notifiés qu'un nouveau joueur a rejoint
 
 **Réponse** :
@@ -133,8 +133,8 @@ socket.on('currentSession', (data) => {
     ```typescript
     {
       playerId: string;
-      playerLabel: string; // ex: "operator 1"
-      playerRole: 'agent' | 'operator'; // OBLIGATOIRE - rôle du joueur
+      playerLabel: string; // ex: "analyste 1"
+      playerRole: 'agent' | 'analyste'; // OBLIGATOIRE - rôle du joueur
       session: Session; // Session mise à jour avec le nouveau joueur
     }
     ```
@@ -167,7 +167,7 @@ socket.on('playerJoined', (data) => {
 {
   sessionCode: string;
   player: string; // Nom/label du joueur (non utilisé actuellement)
-  role: 'agent' | 'operator'; // Role du joueur
+  role: 'agent' | 'analyste'; // Rôle du joueur
 }
 ```
 
@@ -763,12 +763,12 @@ interface Session {
 
 ### Player
 ```typescript
-type PlayerRole = 'agent' | 'operator';
+type PlayerRole = 'agent' | 'analyste';
 
 interface Player {
   id: string; // Socket ID
   role: PlayerRole;
-  label: string; // ex: "agent", "operator 1", "operator 2"
+  label: string; // ex: "agent", "analyste 1", "analyste 2"
 }
 ```
 

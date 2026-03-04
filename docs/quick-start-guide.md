@@ -111,8 +111,8 @@ socket.emit('joinSession', {
 });
 
 socket.on('playerJoined', (data) => {
-  console.log('Vous êtes:', data.playerLabel); // "operator 1", "operator 2", etc.
-  console.log('Rôle:', data.playerRole); // "operator" ou "agent"
+  console.log('Vous êtes:', data.playerLabel); // "analyste 1", "analyste 2", etc.
+  console.log('Rôle:', data.playerRole); // "analyste" ou "agent"
   // data = { playerId, playerLabel, playerRole, session }
 });
 ```

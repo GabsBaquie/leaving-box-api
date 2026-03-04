@@ -221,91 +221,44 @@ export class SessionService {
     return session.operatorActions;
   }
 
-  /**
-   * Détecte si un opérateur a fait un retour en arrière
-   * en comparant la dernière action avec les actions précédentes
-   */
+  /** Détecte un retour en arrière via action 'back' ou navigation vers un état déjà visité */
   async detectBackNavigation(
     sessionCode: string,
     operatorId: string,
   ): Promise<boolean> {
     const actions = await this.getOperatorActions(sessionCode, operatorId);
+    if (actions.length < 2) return false;
 
-    if (actions.length < 2) {
+    const last = actions[actions.length - 1];
+    const prev = actions[actions.length - 2];
+    if (last.action === 'back') return true;
+
+    const getLoc = (a: OperatorAction) =>
+      a.data?.state ?? a.data?.path ?? a.data?.url;
+    const current = getLoc(last);
+    if (
+      (last.action !== 'navigate' && last.action !== 'getSession') ||
+      !current
+    ) {
       return false;
     }
 
-    const lastAction = actions[actions.length - 1];
-    const previousAction = actions[actions.length - 2];
-
-    // Détecter un retour en arrière si :
-    // 1. L'action actuelle est explicitement 'back'
-    if (lastAction.action === 'back') {
-      return true;
-    }
-
-    // 2. Si l'action actuelle est 'navigate' ou 'getSession' et qu'elle correspond à une action antérieure
-    if (
-      (lastAction.action === 'navigate' ||
-        lastAction.action === 'getSession') &&
-      lastAction.data
-    ) {
-      const currentState =
-        lastAction.data.state || lastAction.data.path || lastAction.data.url;
-      const currentPath = lastAction.data.path || lastAction.data.url;
-
-      if (currentState || currentPath) {
-        // Chercher si cet état a déjà été visité avant la dernière action
-        // On cherche dans les 20 dernières actions pour détecter les retours en arrière
-        const searchLimit = Math.max(0, actions.length - 20);
-        for (let i = actions.length - 3; i >= searchLimit; i--) {
-          const pastAction = actions[i];
-          if (
-            (pastAction.action === 'navigate' ||
-              pastAction.action === 'getSession') &&
-            pastAction.data
-          ) {
-            const pastState =
-              pastAction.data.state ||
-              pastAction.data.path ||
-              pastAction.data.url;
-            const pastPath = pastAction.data.path || pastAction.data.url;
-
-            // Comparer les états/paths
-            if (
-              (currentState && pastState && currentState === pastState) ||
-              (currentPath && pastPath && currentPath === pastPath)
-            ) {
-              // Vérifier que ce n'est pas juste une navigation normale vers la même page
-              // Si l'action précédente était différente, c'est probablement un retour en arrière
-              const prevState =
-                previousAction.data?.state ||
-                previousAction.data?.path ||
-                previousAction.data?.url;
-              const prevPath =
-                previousAction.data?.path || previousAction.data?.url;
-
-              if (
-                previousAction.action !== 'navigate' &&
-                previousAction.action !== 'getSession'
-              ) {
-                // Si l'action précédente n'était pas une navigation, c'est probablement un retour
-                return true;
-              }
-
-              if (
-                (currentState && prevState && currentState !== prevState) ||
-                (currentPath && prevPath && currentPath !== prevPath)
-              ) {
-                // Si on revient à un état précédent après avoir été ailleurs, c'est un retour en arrière
-                return true;
-              }
-            }
-          }
+    const searchLimit = Math.max(0, actions.length - 20);
+    for (let i = actions.length - 3; i >= searchLimit; i--) {
+      const past = actions[i];
+      if (
+        (past.action === 'navigate' || past.action === 'getSession') &&
+        past.data
+      ) {
+        const pastLoc = getLoc(past);
+        if (pastLoc && current === pastLoc) {
+          const prevLoc = getLoc(prev);
+          const prevWasNav =
+            prev.action === 'navigate' || prev.action === 'getSession';
+          if (!prevWasNav || (prevLoc && current !== prevLoc)) return true;
         }
       }
     }
-
     return false;
   }
 }

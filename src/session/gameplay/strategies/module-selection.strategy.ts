@@ -2,10 +2,7 @@ import { ModuleEntity } from 'src/game/modules/module.schema';
 import { GameMode } from '../types/gameplay.types';
 
 export interface ModuleSelectionStrategy {
-  selectModules(
-    availableModules: ModuleEntity[],
-    operatorCount: number,
-  ): Promise<ModuleEntity[]>;
+  selectModules(availableModules: ModuleEntity[]): ModuleEntity[];
 }
 
 /**
@@ -18,10 +15,7 @@ export interface ModuleSelectionStrategy {
  * - 4+ opérateurs : round-robin sur les modules
  */
 export class OneOperatorOneModuleStrategy implements ModuleSelectionStrategy {
-  async selectModules(
-    availableModules: ModuleEntity[],
-    operatorCount: number,
-  ): Promise<ModuleEntity[]> {
+  selectModules(availableModules: ModuleEntity[]): ModuleEntity[] {
     // Si 4 modules ou moins, retourner tous les modules
     if (availableModules.length <= 4) {
       return [...availableModules];
@@ -47,10 +41,7 @@ export class OneOperatorOneModuleStrategy implements ModuleSelectionStrategy {
  * Les solutions sont ensuite réparties en round-robin entre tous les opérateurs
  */
 export class RandomOneModuleSplitStrategy implements ModuleSelectionStrategy {
-  async selectModules(
-    availableModules: ModuleEntity[],
-    operatorCount: number,
-  ): Promise<ModuleEntity[]> {
+  selectModules(availableModules: ModuleEntity[]): ModuleEntity[] {
     // Si 4 modules ou moins, retourner tous les modules
     if (availableModules.length <= 4) {
       return [...availableModules];
@@ -77,6 +68,6 @@ export const createModuleSelectionStrategy = (
     case 'RANDOM_ONE_MODULE_SPLIT':
       return new RandomOneModuleSplitStrategy();
     default:
-      throw new Error(`Mode de jeu non supporté: ${gameMode}`);
+      throw new Error(`Mode de jeu non supporté: ${String(gameMode)}`);
   }
 };

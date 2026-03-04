@@ -7,5 +7,5 @@ Un document par fonctionnalité. Chaque page est autonome et indique les flux, p
 - `modules.md` : modèle Mongo et endpoints CRUD des modules.
 - `rest-api.md` : endpoints HTTP disponibles (sessions + modules) et Swagger.
 - `configuration.md` : variables d’environnement, services externes et ressources statiques.
-- `roles.md` : rôles attendus (agent / operator) et droits effectifs.
+- `roles.md` : rôles attendus (agent / analyste) et droits effectifs.
 - `avancements/` : journaux datés des évolutions (ex: `2025-12-17.md`).

@@ -51,10 +51,7 @@ export class GameplayService {
     const moduleSelectionStrategy = createModuleSelectionStrategy(
       config.gameMode,
     );
-    const selectedModules = await moduleSelectionStrategy.selectModules(
-      allModules,
-      operatorCount,
-    );
+    const selectedModules = moduleSelectionStrategy.selectModules(allModules);
 
     if (selectedModules.length === 0) {
       throw new Error('Aucun module sélectionné');
@@ -112,10 +109,7 @@ export class GameplayService {
     const moduleSelectionStrategy = createModuleSelectionStrategy(
       config.gameMode,
     );
-    const selectedModules = await moduleSelectionStrategy.selectModules(
-      allModules,
-      operatorIds.length,
-    );
+    const selectedModules = moduleSelectionStrategy.selectModules(allModules);
 
     if (selectedModules.length === 0) {
       throw new Error('Aucun module sélectionné');

@@ -5,17 +5,17 @@ export type PlayerRole = 'agent' | 'analyste';
 export type Player = {
   id: string;
   role: PlayerRole;
-  label: string; // ex: analyste 1, analyste 2, agent
+  label: string;
 };
 
 export type OperatorAction = {
   operatorId: string;
-  action: string; // ex: 'navigate', 'interact', 'back'
+  action: string;
   timestamp: Date;
-  data?: Record<string, unknown>; // Données supplémentaires de l'action
+  data?: Record<string, unknown>;
 };
 
-export interface Session {
+export type Session = {
   id: string;
   code: string;
   agentId: string;
@@ -25,7 +25,19 @@ export interface Session {
   createdAt: Date;
   players: Player[];
   started: boolean;
-  operatorActions?: OperatorAction[]; // Historique des actions des opérateurs
+  operatorActions?: OperatorAction[];
   difficulty: GameDifficulty;
   gameMode: GameMode;
-}
+};
+
+/** Payloads WebSocket */
+export type CreateSessionPayload = {
+  difficulty: GameDifficulty;
+  gameMode?: GameMode;
+  role: PlayerRole;
+};
+
+export type GatewayErrorResponse = {
+  success: false;
+  message: string;
+};
