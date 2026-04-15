@@ -11,6 +11,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - api_leavingbox
 
   mongo:
     image: mongo:latest
@@ -19,6 +21,8 @@ services:
       - '27017:27017'
     volumes:
       - mongodb:/data/db
+    networks:
+      - api_leavingbox
 
   api:
     build:
@@ -27,6 +31,8 @@ services:
     container_name: api
     ports:
       - '3030:3030'
+      - '3100:3100'
+      - '3200:3200'
     depends_on:
       - mongo
       - redis
@@ -34,8 +40,17 @@ services:
       - ./environment/.env.prod
     environment:
       NODE_ENV: production
+    networks:
+      - api_leavingbox
+      - proxy
 
 volumes:
   redis:
     driver: local
   mongodb:
+
+networks:
+  api_leavingbox:
+    driver: bridge
+  proxy:
+    external: true

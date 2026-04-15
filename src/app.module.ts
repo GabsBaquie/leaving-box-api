@@ -6,6 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { RedisModule } from './session/redis/redis.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ModuleModule } from './game/modules/module.module';
+import { DeviceModule } from './device/device.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { ModuleModule } from './game/modules/module.module';
     ModuleModule,
     SessionsModule,
     RedisModule,
+    DeviceModule,
   ],
   controllers: [AppController],
   providers: [AppService],
