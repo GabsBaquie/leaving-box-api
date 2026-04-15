@@ -194,6 +194,8 @@ socket.on('playerJoined', (data) => {
     {
       message: string; // Raison de la fermeture
       sessionCode: string;
+      difficulty?: 'Easy' | 'Medium' | 'Hard';
+      gameResult?: 'Win' | 'Lose';
     }
     ```
 - **Erreur** : Retour de fonction `{ success: false, message: '...' }` si la session n'existe pas
@@ -362,6 +364,9 @@ socket.on('sessionCleared', (data) => {
   ```typescript
   {
     message: 'Le temps est écoulé !';
+    sessionCode: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    gameResult: 'Win' | 'Lose';
   }
   ```
 
@@ -694,7 +699,7 @@ Ces événements sont émis automatiquement par le serveur et doivent être éco
   - L'agent se déconnecte
   - Tous les opérateurs se déconnectent
 - **Reçu par** : TOUS les clients de la session
-- **Données** : `{ message: string, sessionCode?: string }`
+- **Données** : `{ message: string, sessionCode?: string, difficulty?: 'Easy' | 'Medium' | 'Hard', gameResult?: 'Win' | 'Lose' }`
 
 ### 10. `operatorBackNavigation`
 - **Émis quand** : Un opérateur fait un retour en arrière (détecté automatiquement ou signalé)

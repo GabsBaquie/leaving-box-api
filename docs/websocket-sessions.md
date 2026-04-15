@@ -32,7 +32,7 @@ Gateway : `SessionsGateway` (Socket.IO) avec CORS ouvert. Les sockets rejoignent
 - `sessionCleared` `{ sessionCode }`
 - `timerUpdate` `{ remaining }` (toutes les secondes)
 - `timerStopped` `{ sessionCode }`
-- `gameOver` `{ message }` (fin du temps)
+- `gameOver` `{ message, sessionCode?, difficulty, gameResult? }` (fin du temps ou fermeture de session)
 - `error` `{ message }`
 
 ### Règles côté serveur

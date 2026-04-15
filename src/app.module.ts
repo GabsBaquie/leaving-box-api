@@ -11,14 +11,19 @@ import { ModuleModule } from './game/modules/module.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: process.env.NODE_ENV === 'production' ? './environment/.env.prod' : './environment/.env.dev', 
+      envFilePath:
+        process.env.NODE_ENV === 'production'
+          ? './environment/.env.prod'
+          : './environment/.env.dev',
     }),
     MongooseModule.forRoot(process.env.DATABASE_URL as string, {
       connectionFactory: (connection) => {
         const logger = new Logger('MongoDB');
         if (connection.readyState === 1) {
           logger.log('✅ Connecté à MongoDB');
-          logger.log(`📊 Base de données: ${connection.db?.databaseName || 'N/A'}`);
+          logger.log(
+            `📊 Base de données: ${connection.db?.databaseName || 'N/A'}`,
+          );
         } else {
           logger.warn('⚠️ État de connexion MongoDB:', connection.readyState);
         }

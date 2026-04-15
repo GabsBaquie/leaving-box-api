@@ -25,6 +25,7 @@ export class SessionService {
     gameMode,
     agentId,
   }: CreateSessionDto): Promise<Session> {
+    // Code court lisible côté front (join manuel), distinct de l'id technique.
     const code = uuidv4().replace(/-/g, '').slice(0, 6).toUpperCase();
     const difficultyConfig = getDifficultyConfig(difficulty);
     const maxTime = difficultyConfig.maxTime;
@@ -74,6 +75,7 @@ export class SessionService {
   ): Promise<Session | null> {
     const session = await this.getSession(sessionCode);
     if (session) {
+      // Merge shallow volontaire: les payloads d'update remplacent les branches ciblées.
       const newSession = { ...session, ...updatedData };
       await this.redisService.set(
         `session:${sessionCode}`,
@@ -84,12 +86,21 @@ export class SessionService {
     return null;
   }
 
-  async deleteSession(sessionCode: string): Promise<string> {
+  async deleteSession(
+    sessionCode: string,
+    difficulty?: Session['difficulty'],
+  ): Promise<string> {
     const deletedCount = await this.redisService.del(`session:${sessionCode}`);
     if (deletedCount === 1) {
-      this.logger.log(`Session supprimée avec succès: ${sessionCode}`);
+      const diffPart = difficulty ? ` (difficulty: ${difficulty})` : '';
+      this.logger.log(
+        `Session supprimée avec succès: ${sessionCode}${diffPart}`,
+      );
     } else {
-      this.logger.warn(`Session non trouvée (déjà supprimée?): ${sessionCode}`);
+      const diffPart = difficulty ? ` (difficulty: ${difficulty})` : '';
+      this.logger.warn(
+        `Session non trouvée (déjà supprimée?): ${sessionCode}${diffPart}`,
+      );
     }
     return sessionCode;
   }
@@ -243,6 +254,7 @@ export class SessionService {
       return false;
     }
 
+    // Fenêtre glissante pour limiter le coût CPU sur les longues sessions.
     const searchLimit = Math.max(0, actions.length - 20);
     for (let i = actions.length - 3; i >= searchLimit; i--) {
       const past = actions[i];
@@ -252,6 +264,8 @@ export class SessionService {
       ) {
         const pastLoc = getLoc(past);
         if (pastLoc && current === pastLoc) {
+          // On évite les faux positifs si la précédente action pointait déjà
+          // vers cette même destination (ex: refresh ou double clic).
           const prevLoc = getLoc(prev);
           const prevWasNav =
             prev.action === 'navigate' || prev.action === 'getSession';

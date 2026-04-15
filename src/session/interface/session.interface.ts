@@ -15,6 +15,8 @@ export type OperatorAction = {
   data?: Record<string, unknown>;
 };
 
+export type GameResult = 'Win' | 'Lose';
+
 export type Session = {
   id: string;
   code: string;
@@ -28,6 +30,7 @@ export type Session = {
   operatorActions?: OperatorAction[];
   difficulty: GameDifficulty;
   gameMode: GameMode;
+  gameResult?: GameResult;
 };
 
 /** Payloads WebSocket */

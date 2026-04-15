@@ -19,7 +19,7 @@ Le timer est piloté via WebSockets et persiste son état dans Redis.
 - Quand `remaining <= 0` :
   - arrêt de l’intervalle + suppression de l’entrée `sessionTimers`
   - `remainingTime` forcé à 0 en Redis
-  - émission `gameOver { message: 'Le temps est écoulé !' }`
+  - émission `gameOver { message: 'Le temps est écoulé !', sessionCode, difficulty, gameResult: 'Lose' }`
 
 ### Arrêt manuel
 - Événement : `stopTimer { sessionCode }`

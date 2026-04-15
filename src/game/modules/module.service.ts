@@ -21,7 +21,9 @@ export class ModuleService {
   async findAll(): Promise<ModuleEntity[]> {
     try {
       const modules = await this.ModuleModel.find().exec();
-      this.logger.log(`Récupération de ${modules.length} module(s) depuis MongoDB`);
+      this.logger.log(
+        `Récupération de ${modules.length} module(s) depuis MongoDB`,
+      );
       return modules;
     } catch (error) {
       this.logger.error('Erreur lors de la récupération des modules:', error);

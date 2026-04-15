@@ -353,7 +353,7 @@ GET /sessions/:sessionCode
 | `playerJoined` | `{ playerId, playerLabel, playerRole, session }` | Joueur rejoint - `playerRole` obligatoire |
 | `gameStarted` | `{ session, moduleManuals, solutionsDistribution, solutionsByOperator }` | Jeu démarré |
 | `timerUpdate` | `{ remaining }` | Mise à jour du timer |
-| `gameOver` | `{ message }` | Fin du jeu |
+| `gameOver` | `{ message, sessionCode?, difficulty?, gameResult? }` | Fin du jeu |
 
 ---
 

@@ -10,7 +10,7 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { SessionService } from './session.service';
 import { ModuleService } from 'src/game/modules/module.service';
-import { Session } from './interface/session.interface';
+import { GameResult, Session } from './interface/session.interface';
 import { GameplayService } from './gameplay/gameplay.service';
 
 @WebSocketGateway({
@@ -85,7 +85,8 @@ export class SessionsGateway implements OnGatewayDisconnect {
         gameMode,
         agentId: client.id,
       });
-      // Remove other rooms except the socket's own id.
+      // Ce socket ne doit appartenir qu'à une seule session active:
+      // on purge d'abord ses anciennes rooms pour éviter les émissions croisées.
       for (const room of client.rooms) {
         if (room !== client.id) {
           await this.sessionService.deleteSession(room);
@@ -235,7 +236,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
     // Si la session doit être fermée
     if (removalResult.shouldClose && removalResult.reason) {
-      await this.closeSession(data.sessionCode, removalResult.reason);
+      await this.closeSession(removalResult.session, removalResult.reason);
       return { success: true, sessionClosed: true };
     }
 
@@ -334,7 +335,10 @@ export class SessionsGateway implements OnGatewayDisconnect {
         };
       }
 
-      await this.sessionService.deleteSession(data.sessionCode);
+      await this.sessionService.deleteSession(
+        data.sessionCode,
+        session.difficulty,
+      );
       this.server
         .to(data.sessionCode)
         .emit('sessionCleared', { sessionCode: data.sessionCode });
@@ -705,6 +709,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
   startGameTimer(sessionCode: string, session: Session) {
     let remaining = session.maxTime;
 
+    // Envoi immédiat pour synchroniser les clients qui viennent juste d'entrer.
     this.server.to(sessionCode).emit('timerUpdate', { remaining });
 
     const tick = async () => {
@@ -724,20 +729,33 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
       remaining -= 1;
 
+      // L'état Redis est mis à jour avant l'emit pour que les reconnexions
+      // lisent la valeur la plus récente via getSession.
       await this.sessionService.updateTimer(sessionCode, remaining);
       this.server.to(sessionCode).emit('timerUpdate', { remaining });
 
       if (remaining <= 0) {
         clearInterval(interval);
         delete this.sessionTimers[sessionCode];
-        this.server
-          .to(sessionCode)
-          .emit('gameOver', { message: 'Le temps est écoulé !' });
+        const gameResult: GameResult = 'Lose';
+        // On publie un payload complet afin que le front puisse décider
+        // du rendu (message, score final, analytics) sans second appel.
+        this.server.to(sessionCode).emit('gameOver', {
+          message: 'Le temps est écoulé !',
+          sessionCode,
+          difficulty: session.difficulty,
+          gameResult,
+        });
+        await this.sessionService.updateSession(sessionCode, {
+          gameResult,
+        });
         await this.sessionService.updateTimer(sessionCode, 0);
       }
     };
 
     const interval = setInterval(() => {
+      // On évite de bloquer la boucle d'event-loop:
+      // les erreurs éventuelles sont gérées dans tick et loguées.
       void tick();
     }, 1000);
 
@@ -795,8 +813,9 @@ export class SessionsGateway implements OnGatewayDisconnect {
             disconnectedPlayerId: client.id,
             disconnectedPlayerRole: player.role,
             reason: removalResult.reason,
+            difficulty: removalResult.session.difficulty,
           });
-          await this.closeSession(sessionCode, removalResult.reason);
+          await this.closeSession(removalResult.session, removalResult.reason);
           continue;
         }
 
@@ -814,24 +833,33 @@ export class SessionsGateway implements OnGatewayDisconnect {
   /**
    * Ferme une session (méthode privée réutilisable)
    */
-  private async closeSession(sessionCode: string, reason: string) {
+  private async closeSession(session: Session, reason: string) {
     try {
-      // Arrêter le timer si actif
+      const sessionCode = session.code;
+      const gameResult: GameResult = 'Lose';
+      // 1) Arrêter le timer en premier pour éviter tout nouvel emit timerUpdate.
       await this.stopGameTimer(sessionCode);
 
-      // Supprimer la session de Redis
-      await this.sessionService.deleteSession(sessionCode);
+      // 2) Supprimer la session de Redis avant d'expulser les sockets:
+      // ainsi une reconnexion rapide ne peut pas ressusciter un état obsolète.
+      await this.sessionService.deleteSession(sessionCode, session.difficulty);
 
-      // Informer tous les clients de la fermeture
+      // 3) Notifier explicitement la cause et le contexte de fin de partie.
       this.server.to(sessionCode).emit('gameOver', {
         message: reason,
         sessionCode,
+        difficulty: session.difficulty,
+        gameResult,
       });
 
-      // Éjecter tous les sockets de la room
+      // 4) Nettoyage réseau final: aucun client ne reste abonné à la room.
       this.server.to(sessionCode).socketsLeave(sessionCode);
 
-      this.logger.log('Session fermée', { sessionCode, reason });
+      this.logger.log('Session fermée', {
+        sessionCode,
+        reason,
+        difficulty: session.difficulty,
+      });
     } catch (error) {
       this.logger.error('Erreur lors de la fermeture de session:', error);
     }
