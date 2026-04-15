@@ -12,6 +12,15 @@ import {
 import { RedisService } from 'src/session/redis/redis.service';
 import CreateSessionDto from 'src/session/ressource/createSession.ressource';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  BACK_NAVIGATION_SEARCH_WINDOW,
+  DEFAULT_GAME_DIFFICULTY,
+  DEFAULT_GAME_MODE,
+  MAX_ANALYSTES_PER_SESSION,
+  OPERATOR_ACTIONS_HISTORY_LIMIT,
+  PLAYER_ROLES,
+  SESSION_CODE_LENGTH,
+} from './config/session.config';
 import { getDifficultyConfig } from './gameplay/config/difficulty.config';
 
 @Injectable()
@@ -26,7 +35,10 @@ export class SessionService {
     agentId,
   }: CreateSessionDto): Promise<Session> {
     // Code court lisible côté front (join manuel), distinct de l'id technique.
-    const code = uuidv4().replace(/-/g, '').slice(0, 6).toUpperCase();
+    const code = uuidv4()
+      .replace(/-/g, '')
+      .slice(0, SESSION_CODE_LENGTH)
+      .toUpperCase();
     const difficultyConfig = getDifficultyConfig(difficulty);
     const maxTime = difficultyConfig.maxTime;
     const agentPlayer: Player = createAgentPlayer(agentId);
@@ -61,10 +73,10 @@ export class SessionService {
     const session = JSON.parse(sessionData) as Session;
     // Migration : ajouter les champs manquants pour les anciennes sessions
     if (!session.difficulty) {
-      session.difficulty = 'Medium';
+      session.difficulty = DEFAULT_GAME_DIFFICULTY;
     }
     if (!session.gameMode) {
-      session.gameMode = 'ONE_OPERATOR_ONE_MODULE';
+      session.gameMode = DEFAULT_GAME_MODE;
     }
     return session;
   }
@@ -119,13 +131,40 @@ export class SessionService {
       return session;
     }
 
+    // Sécurité backend: on refuse tout analyste supplémentaire au-delà de la limite.
+    if (role === PLAYER_ROLES.ANALYSTE) {
+      const analysteCount = session.players.filter(
+        (player) => player.role === PLAYER_ROLES.ANALYSTE,
+      ).length;
+      if (analysteCount >= MAX_ANALYSTES_PER_SESSION) {
+        this.logger.warn('Tentative de dépassement de la limite analystes', {
+          sessionCode,
+          playerId,
+          analysteCount,
+          maxAnalystes: MAX_ANALYSTES_PER_SESSION,
+        });
+        throw new Error('MAX_ANALYSTES_REACHED');
+      }
+    }
+
     const player: Player =
-      role === 'agent'
+      role === PLAYER_ROLES.AGENT
         ? createAgentPlayer(playerId)
         : createAnalystePlayer(playerId, session.players);
 
     session.players.push(player);
     await this.updateSession(sessionCode, session);
+    if (role === PLAYER_ROLES.ANALYSTE) {
+      const analysteCount = session.players.filter(
+        (currentPlayer) => currentPlayer.role === PLAYER_ROLES.ANALYSTE,
+      ).length;
+      this.logger.log('Analyste ajouté à la file de session', {
+        sessionCode,
+        playerId,
+        analysteCount,
+        maxAnalystes: MAX_ANALYSTES_PER_SESSION,
+      });
+    }
     return session;
   }
 
@@ -206,8 +245,10 @@ export class SessionService {
     session.operatorActions.push(operatorAction);
 
     // Limiter l'historique à 100 actions pour éviter une croissance excessive
-    if (session.operatorActions.length > 100) {
-      session.operatorActions = session.operatorActions.slice(-100);
+    if (session.operatorActions.length > OPERATOR_ACTIONS_HISTORY_LIMIT) {
+      session.operatorActions = session.operatorActions.slice(
+        -OPERATOR_ACTIONS_HISTORY_LIMIT,
+      );
     }
 
     await this.updateSession(sessionCode, session);
@@ -255,7 +296,10 @@ export class SessionService {
     }
 
     // Fenêtre glissante pour limiter le coût CPU sur les longues sessions.
-    const searchLimit = Math.max(0, actions.length - 20);
+    const searchLimit = Math.max(
+      0,
+      actions.length - BACK_NAVIGATION_SEARCH_WINDOW,
+    );
     for (let i = actions.length - 3; i >= searchLimit; i--) {
       const past = actions[i];
       if (

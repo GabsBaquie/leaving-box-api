@@ -12,6 +12,14 @@ import { SessionService } from './session.service';
 import { ModuleService } from 'src/game/modules/module.service';
 import { GameResult, Session } from './interface/session.interface';
 import { GameplayService } from './gameplay/gameplay.service';
+import {
+  DEFAULT_GAME_DIFFICULTY,
+  DEFAULT_GAME_MODE,
+  GAME_RESULTS,
+  MAX_ANALYSTES_PER_SESSION,
+  PLAYER_ROLES,
+  TIMER_TICK_INTERVAL_MS,
+} from './config/session.config';
 
 @WebSocketGateway({
   cors: {
@@ -28,6 +36,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
   server: Server;
 
   private readonly logger = new Logger(SessionsGateway.name);
+  private readonly maxAnalystesPerSession = MAX_ANALYSTES_PER_SESSION;
 
   constructor(
     private readonly sessionService: SessionService,
@@ -70,7 +79,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       const difficulty = data.difficulty;
 
       // Vérifier que seul un agent peut créer une session
-      if (data.role !== 'agent') {
+      if (data.role !== PLAYER_ROLES.AGENT) {
         return {
           success: false,
           message: 'Only an agent can create a session',
@@ -78,7 +87,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       }
 
       // Mode de jeu par défaut si non fourni
-      const gameMode = data.gameMode || 'ONE_OPERATOR_ONE_MODULE';
+      const gameMode = data.gameMode || DEFAULT_GAME_MODE;
 
       const session = await this.sessionService.createSession({
         difficulty,
@@ -118,7 +127,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
     // Si un opérateur envoie son chemin actuel, on peut détecter un retour en arrière
     if (data.currentPath) {
       const player = sessionData.players.find((p) => p.id === client.id);
-      if (player && player.role === 'analyste') {
+      if (player && player.role === PLAYER_ROLES.ANALYSTE) {
         // Enregistrer cette requête comme une action de navigation
         await this.sessionService.addOperatorAction(
           data.sessionCode,
@@ -175,6 +184,69 @@ export class SessionsGateway implements OnGatewayDisconnect {
     @MessageBody() data: { sessionCode: string; player: string },
     @ConnectedSocket() client: Socket,
   ) {
+    let session: Session | null = null;
+    try {
+      session = await this.sessionService.addPlayerToSession(
+        data.sessionCode,
+        client.id,
+        PLAYER_ROLES.ANALYSTE,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'MAX_ANALYSTES_REACHED') {
+        const currentSession = await this.sessionService.getSession(
+          data.sessionCode,
+        );
+        const analysteCount =
+          currentSession?.players.filter(
+            (player) => player.role === PLAYER_ROLES.ANALYSTE,
+          ).length ?? this.maxAnalystesPerSession;
+        const sessionFullAlert = {
+          message: `Limite atteinte: maximum ${this.maxAnalystesPerSession} analystes autorisés dans cette session.`,
+          sessionCode: data.sessionCode,
+          analysteCount,
+          maxAnalystes: this.maxAnalystesPerSession,
+          rejectedPlayerId: client.id,
+          reason: 'MAX_ANALYSTES_REACHED',
+        };
+
+        // Alerte ciblée pour le joueur refusé (events métier explicites).
+        client.emit('joinSessionRejected', sessionFullAlert);
+        client.emit('sessionFull', sessionFullAlert);
+        // Ciblage explicite par id de socket pour éviter toute ambiguïté de transport.
+        this.server.to(client.id).emit('joinSessionRejected', sessionFullAlert);
+        this.server.to(client.id).emit('sessionFull', sessionFullAlert);
+        this.logger.warn('Connexion refusée: limite analystes atteinte', {
+          sessionCode: data.sessionCode,
+          rejectedPlayerId: client.id,
+          analysteCount,
+          maxAnalystes: this.maxAnalystesPerSession,
+        });
+
+        return {
+          success: false,
+          message: `Session full: maximum ${this.maxAnalystesPerSession} analystes allowed (sessionFull emitted)`,
+          reason: sessionFullAlert.reason,
+          alert: sessionFullAlert,
+        };
+      }
+      this.logger.error(
+        "Erreur lors de l'ajout du joueur à la session:",
+        error,
+      );
+      return {
+        success: false,
+        message: 'Failed to join session',
+      };
+    }
+
+    if (!session) {
+      return {
+        success: false,
+        message: `Session with code ${data.sessionCode} does not exist`,
+      };
+    }
+
+    // Le socket rejoint la room uniquement après validation métier côté backend.
     const rooms = client.rooms;
     for (const room of rooms) {
       if (room !== client.id) {
@@ -182,18 +254,6 @@ export class SessionsGateway implements OnGatewayDisconnect {
       }
     }
     await client.join(data.sessionCode);
-
-    const session = await this.sessionService.addPlayerToSession(
-      data.sessionCode,
-      client.id,
-      'analyste',
-    );
-    if (!session) {
-      return {
-        success: false,
-        message: `Session with code ${data.sessionCode} does not exist`,
-      };
-    }
 
     const player = session.players.find((p) => p.id === client.id);
     if (!player) {
@@ -273,12 +333,33 @@ export class SessionsGateway implements OnGatewayDisconnect {
         started: true,
       })) ?? session;
     const analystes = updatedSession.players.filter(
-      (p) => p.role === 'analyste',
+      (p) => p.role === PLAYER_ROLES.ANALYSTE,
     );
+    this.logger.log("État file d'attente avant lancement", {
+      sessionCode: data.sessionCode,
+      analysteCount: analystes.length,
+      maxAnalystes: this.maxAnalystesPerSession,
+      analystes: analystes.map((player) => ({
+        id: player.id,
+        label: player.label,
+      })),
+    });
+
     if (analystes.length === 0) {
       return {
         success: false,
         message: 'At least one analyste is required to start the game',
+      };
+    }
+    if (analystes.length > this.maxAnalystesPerSession) {
+      this.logger.error('Lancement refusé: trop analystes dans la session', {
+        sessionCode: data.sessionCode,
+        analysteCount: analystes.length,
+        maxAnalystes: this.maxAnalystesPerSession,
+      });
+      return {
+        success: false,
+        message: `Cannot start game: maximum ${this.maxAnalystesPerSession} analystes allowed`,
       };
     }
 
@@ -286,8 +367,8 @@ export class SessionsGateway implements OnGatewayDisconnect {
       // Utiliser le service de gameplay pour démarrer la partie
       const analysteIds = analystes.map((a) => a.id);
       // Valeurs par défaut pour compatibilité avec les anciennes sessions
-      const difficulty = session.difficulty || 'Medium';
-      const gameMode = session.gameMode || 'ONE_OPERATOR_ONE_MODULE';
+      const difficulty = session.difficulty || DEFAULT_GAME_DIFFICULTY;
+      const gameMode = session.gameMode || DEFAULT_GAME_MODE;
 
       const gameplayResult = await this.gameplayService.startGameWithOperators(
         {
@@ -302,6 +383,13 @@ export class SessionsGateway implements OnGatewayDisconnect {
         moduleManuals: gameplayResult.moduleManuals,
         solutionsDistribution: gameplayResult.solutionsDistribution,
         solutionsByAnalyste: gameplayResult.solutionsByAnalyste,
+      });
+      this.logger.log('Partie lancée', {
+        sessionCode: data.sessionCode,
+        difficulty,
+        gameMode,
+        analysteCount: analystes.length,
+        analysteIds,
       });
 
       return { success: true };
@@ -364,7 +452,9 @@ export class SessionsGateway implements OnGatewayDisconnect {
         message: `Session with code ${data.sessionCode} does not exist`,
       };
     }
-    const analystes = session.players.filter((p) => p.role === 'analyste');
+    const analystes = session.players.filter(
+      (p) => p.role === PLAYER_ROLES.ANALYSTE,
+    );
     if (analystes.length === 0) {
       return {
         success: false,
@@ -442,7 +532,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
 
       // Vérifier que le client est un opérateur dans cette session
       const player = session.players.find((p) => p.id === client.id);
-      if (!player || player.role !== 'analyste') {
+      if (!player || player.role !== PLAYER_ROLES.ANALYSTE) {
         return {
           success: false,
           message: 'Only analystes can send actions',
@@ -563,7 +653,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       }
 
       // Si c'est l'agent qui fait un retour en arrière, on log mais on ne notifie pas
-      if (player.role === 'agent') {
+      if (player.role === PLAYER_ROLES.AGENT) {
         // Enregistrer l'action pour l'historique
         await this.sessionService.addOperatorAction(
           data.sessionCode,
@@ -574,14 +664,14 @@ export class SessionsGateway implements OnGatewayDisconnect {
             timestamp: new Date(),
             path: data.path,
             state: data.state,
-            role: 'agent',
+            role: PLAYER_ROLES.AGENT,
           },
         );
         return { success: true, message: 'Agent back navigation recorded' };
       }
 
       // Si c'est un opérateur, on enregistre et on notifie l'agent
-      if (player.role !== 'analyste') {
+      if (player.role !== PLAYER_ROLES.ANALYSTE) {
         this.logger.error('Rôle invalide pour le retour en arrière', {
           clientId: client.id,
           role: player.role,
@@ -737,7 +827,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       if (remaining <= 0) {
         clearInterval(interval);
         delete this.sessionTimers[sessionCode];
-        const gameResult: GameResult = 'Lose';
+        const gameResult: GameResult = GAME_RESULTS.LOSE;
         // On publie un payload complet afin que le front puisse décider
         // du rendu (message, score final, analytics) sans second appel.
         this.server.to(sessionCode).emit('gameOver', {
@@ -757,7 +847,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
       // On évite de bloquer la boucle d'event-loop:
       // les erreurs éventuelles sont gérées dans tick et loguées.
       void tick();
-    }, 1000);
+    }, TIMER_TICK_INTERVAL_MS);
 
     this.sessionTimers[sessionCode] = interval;
   }
@@ -836,7 +926,7 @@ export class SessionsGateway implements OnGatewayDisconnect {
   private async closeSession(session: Session, reason: string) {
     try {
       const sessionCode = session.code;
-      const gameResult: GameResult = 'Lose';
+      const gameResult: GameResult = GAME_RESULTS.LOSE;
       // 1) Arrêter le timer en premier pour éviter tout nouvel emit timerUpdate.
       await this.stopGameTimer(sessionCode);
 
@@ -876,8 +966,10 @@ export class SessionsGateway implements OnGatewayDisconnect {
     hasOperator: boolean;
     reason?: string;
   } {
-    const hasAgent = session.players.some((p) => p.role === 'agent');
-    const hasAnalyste = session.players.some((p) => p.role === 'analyste');
+    const hasAgent = session.players.some((p) => p.role === PLAYER_ROLES.AGENT);
+    const hasAnalyste = session.players.some(
+      (p) => p.role === PLAYER_ROLES.ANALYSTE,
+    );
     const isValid = hasAgent && hasAnalyste;
 
     let reason: string | undefined;
@@ -919,8 +1011,10 @@ export class SessionsGateway implements OnGatewayDisconnect {
     agentCount: number;
     operatorCount: number;
   } {
-    const agents = session.players.filter((p) => p.role === 'agent');
-    const analystes = session.players.filter((p) => p.role === 'analyste');
+    const agents = session.players.filter((p) => p.role === PLAYER_ROLES.AGENT);
+    const analystes = session.players.filter(
+      (p) => p.role === PLAYER_ROLES.ANALYSTE,
+    );
 
     return {
       agents,
